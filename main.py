@@ -60,8 +60,16 @@ x = np.linspace(0,T*dataPoints, dataPoints)
 
 def main():
 
+    # Chose Frequency
+    # f_max would be f_nyquist
+    fmax = 
+
+
+    # Subsampling rate
+    ssr = 
+
     # Create Actors and Critics
-    #actor = SimpleActor(
+    actor = SimpleActor(,128)
 
 
     # Basically N Environments

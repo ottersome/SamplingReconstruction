@@ -8,10 +8,13 @@ class GenMethods(Enum):
 
 
 class DatasetGenerator():
-    def __init__(self, samples=1000, num_coeffs, gen_method=GenMethods.NORMAL):
+    def __init__(self, coefficient_resolution=10000, method=GenMethods.NORMAL, lim_gen_method=GenMethods.UNIFORM):
         self.samples = samples
         self.num_coeffs = num_coeffs
         self.samples = []
+
+    def gen_data():
+        # Set the 
 
     def get_time_signal():
         # Generate Positive Coefficietns
@@ -25,3 +28,4 @@ class DatasetGenerator():
         # Do Inverse Fourier Transform
         time_signal = np.fft.ifft(all_coefs)
         return time_signal
+
