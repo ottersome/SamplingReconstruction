@@ -1,10 +1,11 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from  samprecon.environments.bandlimited import DatasetGenerator, GenMethods
+from  samprecon.environments.bandlimited import BandlimitedGenerator, GenMethods
 from samprecon.learners.actors import SimpleActor
 from samprecon.learners.qestimators import SimpleQEstimator
 import argparse
+from tqdm import tqdm
 
 def argsFunc():
     argsParsr = argparse.ArgumentParser()
@@ -12,6 +13,8 @@ def argsFunc():
     argsParsr.add_argument('--data_points',default=1000)
     argsParsr.add_argument('--num_coefficients',default=10000)
     argsParsr.add_argument('--time_period',default=1)
+    argsParsr.add_argument('--training_epochs',default=1)
+    argsParsr.add_argument('--sample_budget',default=5)
     argsParsr.add_argument('--band_a',default=2000)
     argsParsr.add_argument('--band_b',default=1)
 
@@ -52,6 +55,8 @@ def plot_generated_coeffs(coeffs):
 
 N = args.dataset_size
 T = args.time_period
+epochs = args.training_epochs
+samp_budget = args.sample_budget
 dataPoints = args.data_points
 band = [args.band_a,args.band_b]
 coeffs = args.num_coefficients
@@ -62,15 +67,23 @@ def main():
 
     # Chose Frequency
     # f_max would be f_nyquist
-    fmax = 
-
+    fmax = 1
 
     # Subsampling rate
     ssr = 
 
     # Create Actors and Critics
-    actor = SimpleActor(,128)
+    # Actors chose sampling rate
+    actor = SimpleActor(samp_budget,128)
 
+    ## Training Loop
+    epoch_meter = tqdm(total=epochs,desc='Training Epoch')
+    for epoch in epochs
+    #Once actor chose sampling rate we regenerate the environment and collect payoff
+        # Get State
+        state = 
+
+        epoch_meter.update(1)
 
     # Basically N Environments
     dataset_gen = DatasetGenerator(N,coeffs,GenMethods.NORMAL)
