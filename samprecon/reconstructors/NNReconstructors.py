@@ -25,3 +25,17 @@ class NNReconstructor(Reconstructor):
 
     def reconstruct(self, subsampled_signal):
         return self.model(subsampled_signal)
+class WideNN(nn.Module):
+
+    def __init__(self, initial_res, final_res):
+        super(WideNN,self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(initial_res, 256),
+            nn.ReLU(),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, final_res)
+        )
+
+    def forward(self, x):
+        return self.fc(x)
