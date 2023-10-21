@@ -29,8 +29,8 @@ class BandlimitedSimple():
             # Coeffs
             #a = generated_random((1,num_coeffs),GenMethods.NORMAL,rang=[0,1])
             #b = generated_random((1,num_coeffs),GenMethods.NORMAL,rang=[0,1])
-            a = np.random.randn(1,num_coeffs)*10
-            b = np.random.randn(1,num_coeffs)*10
+            a = np.random.normal(size=(1,num_coeffs),scale=1)
+            b = np.random.normal(size=(1,num_coeffs),scale=1)
             coeffs = a+1j*b
             #coeffs = np.linspace(0,1,num_coeffs)
 
