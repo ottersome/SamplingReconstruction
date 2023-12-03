@@ -3,6 +3,8 @@ from typing import Dict
 import numpy as np
 from scipy.linalg import expm
 
+from sp_sims.utils.utils import get_q_mat
+
 from .abssimulator import SPManager, StochasticSimulator
 
 
@@ -117,10 +119,36 @@ class TransitionMatrixBD(SPManager):
         self.max_state = self.P.shape
 
     def generate_history(self, init_state: int, path_length: int) -> np.ndarray:
+        """
+        For processes that will look at entire histories at once
+        """
         states = [init_state]
-        for i in range(path_length - 1):
+        for _ in range(path_length - 1):
             states.append(np.random.choice(self.max_state[0], p=self.P[states[-1], :]))
         return np.asarray(states)
+
+
+class BDStates:
+    def __init__(
+        self, rates: Dict[str, float], finest_rate: float, num_states: int, init_state=0
+    ):
+        self.DT = finest_rate
+        self.Q = get_q_mat(rates, num_states)  # CHECK:
+        self.P = expm(self.Q * self.DT)
+        self.max_state = self.P.shape[0] - 1
+
+        self.curr_history = [init_state]  # TODO: make this into a limited FIFO ?
+
+    def sample(self, decimation_rate: int, sampling_budget):
+        length = decimation_rate * sampling_budget
+        path = []
+        for _ in range(length):
+            path.append(
+                np.random.choice(self.max_state, p=self.P[self.curr_history[-1], :])
+            )
+        dec_path = path[::decimation_rate]
+        self.curr_history = dec_path
+        return self.curr_history
 
 
 class EmbeddedMarkC_BD(SPManager):
