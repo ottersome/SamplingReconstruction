@@ -1,11 +1,14 @@
-import torch
-import numpy as np
+import argparse
+
 import matplotlib.pyplot as plt
-from  samprecon.environments.bandlimited import BandlimitedGenerator, GenMethods
+import numpy as np
+import torch
+from tqdm import tqdm
+
+from samprecon.environments.bandlimited import BandlimitedGenerator, GenMethods
 from samprecon.learners.actors import SimpleActor
 from samprecon.learners.qestimators import SimpleQEstimator
-import argparse
-from tqdm import tqdm
+
 
 def argsFunc():
     argsParsr = argparse.ArgumentParser()
@@ -94,8 +97,6 @@ def main():
 
     # TODO 
 
-
-    
 
 ## Create all Coefficients
 

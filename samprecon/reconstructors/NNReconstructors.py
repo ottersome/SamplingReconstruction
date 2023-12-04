@@ -6,11 +6,10 @@ import torch.nn as nn
 from .reconstruct_intf import Reconstructor
 
 
-class RNNResconstructor(Reconstructor, nn.Module):
+class RNNReconstructor(nn.Module):
     def __init__(
         self,
-        sample_budget: int,
-        hidden_size: int,
+        subsampled_signal_length: int,
     ):
         """
         Args:
@@ -19,28 +18,21 @@ class RNNResconstructor(Reconstructor, nn.Module):
                 sub_length (int): Size of input. i.e. size of subsampled signal
                 full_length (int): Size of final reconstructed signal.
         """
-        super(nn.Module).__init__()
+        super().__init__()
         # Take a variable length scalar input signals
-        self.hidden_size = hidden_size
+        self.hidden_size = (
+            subsampled_signal_length + 1 + 1
+        )  # One for rate and one for count
+        self.rnn = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
 
-        ## Build Model
-        self.model = nn.Sequential(
-            nn.Linear(self.sample_buget, 128),
-            nn.ReLU(),
-            nn.Linear(self.hidden_size, 256),
-            nn.ReLU(),
-            nn.Linear(256, self.full_length),
-        )
-        return self.model
+    def forward(self, subsampled_signal: List, rate, reconstruct_length: int):
+        # Append subsampled_signal, rate, reconstruct_length
+        x = torch.Tensor(subsampled_signal.append(rate)).tile((reconstruct_length, 1))
+        x_count = torch.arange(reconstruct_length)[::-1].view(reconstruct_length, -1)
+        x = torch.hstack([x, x_count])
+        x = x.view(1, reconstruct_length, -1)
 
-    def reconstruct(self, subsampled_signal: List, rate):
-        # For now vstack the rate into a new vertical axis
-        x = torch.vstack(
-            [torch.Tensor(subsampled_signal), torch.full_like(subsampled_signal, rate)],  # type: ignore
-        )
-        x = self.rnn(x)
-        y = self.model(x)
-
+        y = self.rnn(x)
         return y
 
 

@@ -1,6 +1,7 @@
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
+import torch
 from scipy.linalg import expm
 
 from sp_sims.utils.utils import get_q_mat
@@ -139,14 +140,17 @@ class BDStates:
 
         self.curr_history = [init_state]  # TODO: make this into a limited FIFO ?
 
-    def sample(self, decimation_rate: int, sampling_budget):
-        length = decimation_rate * sampling_budget
+    def sample(self, decimation_rate: torch.Tensor, sampling_budget: int) -> List:
+        length = int(decimation_rate * sampling_budget)
         path = []
         for _ in range(length):
             path.append(
-                np.random.choice(self.max_state, p=self.P[self.curr_history[-1], :])
+                np.random.choice(
+                    np.arange(self.max_state + 1), p=self.P[self.curr_history[-1], :]
+                ).squeeze()
             )
-        dec_path = path[::decimation_rate]
+        print("This is bothering you :", int(decimation_rate))
+        dec_path = path[:: int(decimation_rate)]
         self.curr_history = dec_path
         return self.curr_history
 

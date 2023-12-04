@@ -23,21 +23,21 @@ class Agent(ABC):
 
 
 class SimpleAgent(Agent, nn.Module):
-    def __init__(self, state_size: int):
+    def __init__(self, state_size: int, dec_range):
         super().__init__()
-        self.sequence = nn.Sequential(
+        self.dec_range = dec_range
+        self.model = nn.Sequential(
             nn.Linear(state_size, 128),
             nn.ReLU(),
             nn.Linear(128, 256),
             nn.ReLU(),
             nn.Linear(256, 1),  # Keep it as regression for now
+            nn.Sigmoid(),
         )
 
     def forward(self, state):
         # We want regressiont to be capt between 1 -> action_size:
-        cap_regression = (
-            nn.Sigmoid(self.sequence(state)) * self.action_size
-        )  # CHECK: Doign this usually does not work
+        cap_regression = self.model(state) * self.dec_range
         return cap_regression
 
     def act(self, observation: torch.Tensor):

@@ -36,7 +36,7 @@ class MarkovianUniformEnvironment:
         # Modules
         state_generator: BDStates,
         sampling_arbiter: nn.Module,
-        reconstructor: Reconstructor,
+        reconstructor: nn.Module,
         # Some othe random varsj
         starting_decrate: int,
         sampling_budget: int = 4,  # This stays fixed
@@ -48,7 +48,13 @@ class MarkovianUniformEnvironment:
         self.sampling_budget = sampling_budget
         self.optimizer = optim.Adam(list(self.sampling_arbiter.parameters()))
 
-        self.prev_state = [0]
+        self.prev_state = (
+            torch.tensor(
+                self.state_generator.sample(starting_decrate, self.sampling_budget)
+            )
+            .to(torch.float32)
+            .view(-1, sampling_budget)
+        )
         self.criterion = nn.MSELoss()
 
         self.logger = setup_logger("MarkovianUniformEnvironment", INFO)
@@ -61,20 +67,21 @@ class MarkovianUniformEnvironment:
         """
         self.optimizer.zero_grad()
 
-        action = self.sampling_arbiter.sample(self.prev_state)
+        action: torch.Tensor = self.sampling_arbiter(self.prev_state).view(-1, 1)
         mask = differentiable_uniform_sampler(self.prev_state, action)
-
-        # Generate Decimated Path
         new_state = torch.Tensor(
             self.state_generator.sample(action, self.sampling_budget)
         )
 
         dec_state = new_state * mask
-        reconstruction = self.reconstructor.reconstruct(dec_state, action)
-        loss = self.criterion(new_state, reconstruction)
 
+        reconstruction = self.reconstructor(
+            dec_state, action, self.state_generator.DT * self.sampling_budget
+        )
+
+        loss = self.criterion(new_state, reconstruction)
         self.optimizer.step()
-        # Evaluation
+
         self.prev_state = new_state
 
         return loss.item()
