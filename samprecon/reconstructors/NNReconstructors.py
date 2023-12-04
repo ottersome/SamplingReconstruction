@@ -9,7 +9,7 @@ from .reconstruct_intf import Reconstructor
 class RNNReconstructor(nn.Module):
     def __init__(
         self,
-        subsampled_signal_length: int,
+        amnt_states: int,
     ):
         """
         Args:
@@ -20,19 +20,28 @@ class RNNReconstructor(nn.Module):
         """
         super().__init__()
         # Take a variable length scalar input signals
-        self.hidden_size = (
-            subsampled_signal_length + 1 + 1
-        )  # One for rate and one for count
+        self.hidden_size = amnt_states + 1 + 1  # One for rate and one for count
         self.rnn = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
+        self.classifier = nn.Linear(self.hidden_size, amnt_states)
+        self.sm = nn.Softmax(dim=-1)
 
-    def forward(self, subsampled_signal: List, rate, reconstruct_length: int):
+    def forward(
+        self,
+        subsampled_signal: torch.Tensor,
+        rate: torch.Tensor,
+        reconstruct_length: int,
+    ):
         # Append subsampled_signal, rate, reconstruct_length
-        x = torch.Tensor(subsampled_signal.append(rate)).tile((reconstruct_length, 1))
-        x_count = torch.arange(reconstruct_length)[::-1].view(reconstruct_length, -1)
-        x = torch.hstack([x, x_count])
-        x = x.view(1, reconstruct_length, -1)
+        rate_interleaved = rate.repeat_interleave(reconstruct_length, dim=1).unsqueeze(-1)
+        x = torch.cat((subsampled_signal, rate_interleaved), dim=-1)
+        x_count = torch.flip(torch.arange(reconstruct_length), [0]).view(
+            x.shape[0], -1, 1
+        )
+        x = torch.cat((x, x_count), dim=-1)
 
-        y = self.rnn(x)
+        out,hiddn = self.rnn(x) # Check what is the difference between, out and hiddn
+        y = self.classifier(out)
+        y = self.sm(y)
         return y
 
 

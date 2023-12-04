@@ -136,23 +136,21 @@ class BDStates:
         self.DT = finest_rate
         self.Q = get_q_mat(rates, num_states)  # CHECK:
         self.P = expm(self.Q * self.DT)
+        self.init_state = 0
         self.max_state = self.P.shape[0] - 1
 
-        self.curr_history = [init_state]  # TODO: make this into a limited FIFO ?
+        self.curr_history = [self.init_state]  # TODO: make this into a limited FIFO ?
 
-    def sample(self, decimation_rate: torch.Tensor, sampling_budget: int) -> List:
+    def sample(self, decimation_rate: int, sampling_budget: int) -> List:
         length = int(decimation_rate * sampling_budget)
-        path = []
-        for _ in range(length):
-            path.append(
-                np.random.choice(
-                    np.arange(self.max_state + 1), p=self.P[self.curr_history[-1], :]
-                ).squeeze()
-            )
-        print("This is bothering you :", int(decimation_rate))
-        dec_path = path[:: int(decimation_rate)]
-        self.curr_history = dec_path
-        return self.curr_history
+        sample_list = [self.init_state]
+        for i in range(length-1):
+            new_state = np.random.choice(
+                np.arange(self.max_state + 1), p=self.P[sample_list[-1], :]
+            ).squeeze()
+            sample_list.append(new_state)
+        self.cur_history = sample_list
+        return self.cur_history
 
 
 class EmbeddedMarkC_BD(SPManager):

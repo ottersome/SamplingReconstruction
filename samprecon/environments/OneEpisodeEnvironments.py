@@ -2,6 +2,7 @@ from logging import INFO
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from samprecon.generators.bandlimited import BandlimitedGenerator
@@ -48,12 +49,15 @@ class MarkovianUniformEnvironment:
         self.sampling_budget = sampling_budget
         self.optimizer = optim.Adam(list(self.sampling_arbiter.parameters()))
 
+        self.last_action = starting_decrate
+        # TODO: We will have to find a heuristic to initialize this
+        length = int(starting_decrate * self.sampling_budget)
         self.prev_state = (
-            torch.tensor(
+            torch.Tensor(
                 self.state_generator.sample(starting_decrate, self.sampling_budget)
             )
-            .to(torch.float32)
-            .view(-1, sampling_budget)
+            .to(torch.float)
+            .view(length)
         )
         self.criterion = nn.MSELoss()
 
@@ -67,22 +71,34 @@ class MarkovianUniformEnvironment:
         """
         self.optimizer.zero_grad()
 
-        action: torch.Tensor = self.sampling_arbiter(self.prev_state).view(-1, 1)
-        mask = differentiable_uniform_sampler(self.prev_state, action)
-        new_state = torch.Tensor(
-            self.state_generator.sample(action, self.sampling_budget)
+        # TODO: We may be able to change this into a cumulative gradient
+        action: torch.Tensor = (
+            self.sampling_arbiter(self.prev_state[:: self.last_action])
+            .view(1, -1)
+            .to(torch.int)
         )
 
-        dec_state = new_state * mask
+        # New State
+        new_state = (
+            torch.Tensor(self.state_generator.sample(action, self.sampling_budget))
+            #.view(1, -1)
+            #.to(torch.float)
+        )
+        new_state_oh = F.one_hot(
+            new_state.view(1,-1).to(torch.long), num_classes=self.state_generator.max_state+1
+        ).float()
+        dec_state = differentiable_uniform_sampler(new_state_oh, action)
+
 
         reconstruction = self.reconstructor(
-            dec_state, action, self.state_generator.DT * self.sampling_budget
+            dec_state, action, action.squeeze() * self.sampling_budget
         )
 
-        loss = self.criterion(new_state, reconstruction)
+        loss = self.criterion(new_state_oh, reconstruction)
         self.optimizer.step()
 
         self.prev_state = new_state
+        self.last_action = action.item()
 
         return loss.item()
 

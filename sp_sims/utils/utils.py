@@ -48,7 +48,7 @@ def show_sanity_matrxs(matrices, titles):
 
 
 def get_q_mat(rates, shape):
-    shape += 1
+    # shape += 1
     k = [
         rates["mu"] * np.ones(shape - 1),
         -(rates["mu"] + rates["lam"]) * np.ones(shape),
