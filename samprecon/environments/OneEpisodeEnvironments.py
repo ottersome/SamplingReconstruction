@@ -118,7 +118,7 @@ class MarkovianUniformEnvironment:
                 torch.sum(torch.abs(v - self.sampling_arbiter_last_weights[i]))
             )
         differences = torch.sum(torch.Tensor(differences))
-        self.logger.info(f"Sum of weight difference arbiterer{differences:.8f}")
+        #self.logger.info(f"Sum of weight difference arbiterer{differences:.8f}")
         self.sampling_arbiter_last_weights = list(
             self.sampling_arbiter.state_dict().values()
         )
@@ -129,7 +129,7 @@ class MarkovianUniformEnvironment:
                 torch.sum(torch.abs(v - self.reconstructor_last_weights[i]))
             )
         differences = torch.sum(torch.Tensor(differences))
-        self.logger.info(f"Sum of weight difference  reconstructor{differences:.8f}")
+        #self.logger.info(f"Sum of weight difference  reconstructor{differences:.8f}")
         self.reconstructor_last_weights = list(self.reconstructor.state_dict().values())
 
         self.prev_state = new_state.to(torch.float)
