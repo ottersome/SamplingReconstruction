@@ -44,10 +44,17 @@ class MarkovianUniformEnvironment:
     ):
         self.state_generator = state_generator
         self.cur_decimation_rate = starting_decrate
+        self.sampling_budget = sampling_budget
+        # Modules
         self.reconstructor = reconstructor
         self.sampling_arbiter = sampling_arbiter
-        self.sampling_budget = sampling_budget
-        self.optimizer = optim.Adam(list(self.sampling_arbiter.parameters()))
+
+        # Optimizer
+        self.optimizer = optim.Adam(list(self.sampling_arbiter.parameters())
+            + list(self.reconstructor.parameters()))
+
+        self.sampling_arbiter_last_weights  = list(self.sampling_arbiter.state_dict().values())
+        self.reconstructor_last_weights = list(self.reconstructor.state_dict().values())
 
         self.last_action = starting_decrate
         # TODO: We will have to find a heuristic to initialize this
@@ -94,8 +101,26 @@ class MarkovianUniformEnvironment:
             dec_state, action, action.squeeze() * self.sampling_budget
         )
 
-        loss = self.criterion(new_state_oh, reconstruction)
+        loss = self.criterion(reconstruction, new_state_oh)
+        loss.backward()
+
         self.optimizer.step()
+
+        # DEBUG:
+        # For sampling_arbiter
+        differences = []
+        for i,v in enumerate(self.sampling_arbiter.state_dict().values()):
+            differences.append(torch.sum(v - self.sampling_arbiter_last_weights[i]))
+        differences = torch.sum(torch.Tensor(differences))
+        self.logger.info(f"Sum of weight difference arbiterer{differences:.4f}")
+        self.sampling_arbiter_last_weights = list(self.sampling_arbiter.state_dict().values())
+        # For reconstructor
+        differences = []
+        for i,v in enumerate(self.reconstructor.state_dict().values()):
+            differences.append(torch.sum(v - self.reconstructor_last_weights[i]))
+        differences = torch.sum(torch.Tensor(differences))
+        self.logger.info(f"Sum of weight difference  reconstructor{differences:.4f}")
+        self.reconstructor_last_weights = list(self.reconstructor.state_dict().values())
 
         self.prev_state = new_state
         self.last_action = action.item()
