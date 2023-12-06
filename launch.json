@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "name": "exp2.5",
+      "type": "python",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "python": "/Users/rac716/miniforge3/envs/rs39/bin/python",
+      "stopOnEntry": false,
+      "debugOptions": [],
+      "program": "/Users/rac716/Research/SamplingReconstruction/exp2.5.py"
+    },
+    {
+      "name": "detection",
+      "type": "python",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "python": "/home/ottersome/miniconda3/envs/polimi/bin/python",
+      "stopOnEntry": false,
+      "debugOptions": [],
+      "program": "${workspaceFolder}/scripts/ddos_detection.py"
+    }
+  ]
+}

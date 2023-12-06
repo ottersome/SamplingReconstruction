@@ -23,7 +23,7 @@ class RNNReconstructor(nn.Module):
         self.hidden_size = amnt_states + 1 + 1  # One for rate and one for count
         self.rnn = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
         self.classifier = nn.Linear(self.hidden_size, amnt_states)
-        self.sm = nn.Softmax(dim=-1)
+        self.sm = nn.LogSoftmax(dim=-1)
 
     def forward(
         self,
