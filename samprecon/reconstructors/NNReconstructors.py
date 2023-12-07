@@ -31,34 +31,44 @@ class RNNReconstructor(nn.Module):
         self,
         subsampled_signal: torch.Tensor,
         rate: torch.Tensor,
-        #reconstruct_length: int,
+        # reconstruct_length: int,
     ):
+        """
+        Outputs logits!
+        """
         # Append subsampled_signal, rate, reconstruct_length
         # rate_cloned = rate.repeat_interleave(reconstruct_length, dim=1).unsqueeze(
         # -1
         # )
-        mask = torch.ones((1, subsampled_signal.shape[1]), dtype=torch.float32).unsqueeze(-1)
+        mask = torch.ones(
+            (1, subsampled_signal.shape[1]), dtype=torch.float32
+        ).unsqueeze(-1)
         rate_cloned = (mask * rate) / self.max_decimation_rate
 
         x = torch.cat((subsampled_signal, rate_cloned), dim=-1)
-        x_count = torch.flip(torch.arange(subsampled_signal.shape[1]), [0]).view(
-            x.shape[0], -1, 1
-        )/subsampled_signal.shape[1]
+        x_count = (
+            torch.flip(torch.arange(subsampled_signal.shape[1]), [0]).view(
+                x.shape[0], -1, 1
+            )
+            / subsampled_signal.shape[1]
+        )
         x = torch.cat((x, x_count), dim=-1)
-        # Normalize on second dimension 
+        # Normalize on second dimension
 
         out, hiddn = self.rnn(x)  # Check what is the difference between, out and hiddn
         y = self.classifier(out)
-        y = self.sm(y)
+        #y = self.sm(y)
         return y
+
     def initialize_grad_hooks(self):
         for layer in self.modules():
             if isinstance(layer, torch.nn.Linear):
                 layer.register_backward_hook(print_grad_hook)
 
+
 def print_grad_hook(module, grad_input, grad_output):
     print("grad_input", grad_input)
-    print("grad_output", grad_output)   
+    print("grad_output", grad_output)
 
 
 class NNReconstructor(Reconstructor, nn.Module):

@@ -44,7 +44,7 @@ def generate_sigmoid_mask(
     batch_size: int,
     signal_length: int,
     decimation_intervals: npt.ArrayLike,
-    sharpness=10,
+    sharpness=1,
 ):
     masks = torch.zeros(batch_size, signal_length)
     for i in range(batch_size):
@@ -55,16 +55,13 @@ def generate_sigmoid_mask(
                 torch.tensor(decimation_intervals[i])
                 - torch.fmod(torch.tensor([j]), decimation_intervals[i]),
             )
-            masks[i, j] = 1 / (
-                1
-                + torch.exp(
-                    torch.max(
-                        torch.Tensor(
-                            (-sharpness * (1 - distance_to_nearest_sample), 10.0)
-                        )
-                    )
-                )
-            )
+            distance = torch.Tensor((distance_to_nearest_sample, 10))
+            distance_m = torch.min(distance)
+            exp = torch.exp(distance_m)
+            divisor = torch.min(torch.Tensor((exp, 1000)))
+            if divisor == 0:
+                print("What the fuck")
+            masks[i, j] = 1 / divisor
 
     return masks
 

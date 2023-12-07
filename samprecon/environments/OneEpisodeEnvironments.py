@@ -1,6 +1,7 @@
 import copy
 from logging import INFO
 from math import ceil
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
@@ -33,6 +34,76 @@ class Model(nn.Module):
         return self.reconstructor(self.sampling_optimizer.act(x))
 
 
+class MarkovianUniformCumulativeEnvironment:
+    def __init__(
+        self,
+        # Modules
+        state_generator: BDStates,
+        reconstructor: nn.Module,
+        # Some othe random varsj
+        starting_decrate: int,
+        sampling_budget: int = 4,  # This stays fixed
+    ):
+        # self.device = torch.device("cuda")
+        self.state_generator = state_generator
+        self.cur_decimation_rate = starting_decrate
+        self.sampling_budget = sampling_budget
+        # Modules
+        self.reconstructor = reconstructor  # .to(self.device)
+
+        # self.reconstructor_last_weights = list(self.reconstructor.state_dict().values())
+
+        # TODO: We will have to find a heuristic to initialize this
+
+        self.logger = setup_logger("MarkovianUniformEnvironment", INFO)
+        self.done = False
+        self.criterion = nn.NLLLoss()
+
+    def reset(self, default_dec_rate):
+        initial_state = (
+            torch.Tensor(
+                self.state_generator.sample(default_dec_rate, self.sampling_budget)
+            ).to(torch.float)[::default_dec_rate]
+        )[: self.sampling_budget]
+        return initial_state
+
+    def step(self, action: torch.Tensor) -> Dict[str, Any]:
+        """
+        Args:
+        Returns:
+            Stats to display
+        """
+
+        # TODO: We may be able to change this into a cumulative gradient
+        # New State
+        new_state = torch.Tensor(
+            self.state_generator.sample(action, self.sampling_budget)
+        )
+
+        new_state_oh = F.one_hot(
+            new_state.view(1, -1).to(torch.long),
+            num_classes=self.state_generator.max_state + 1,
+        ).float()
+
+        dec_state = differentiable_uniform_sampler(new_state_oh, action)
+
+        reconstruction = self.reconstructor(
+            dec_state,
+            action,
+            # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
+        )
+        logsoft_recon = F.log_softmax(reconstruction.squeeze(), dim=-1)
+        reward = -self.criterion(logsoft_recon.squeeze(), new_state.to(torch.long))
+
+        # self.prev_state = new_state.to(torch.float)
+
+        return (
+            new_state[:: int(action)][: self.sampling_budget].view(1, -1),
+            reward,
+            self.done,
+        )
+
+
 class MarkovianUniformEnvironment:
     def __init__(
         self,
@@ -43,6 +114,7 @@ class MarkovianUniformEnvironment:
         # Some othe random varsj
         starting_decrate: int,
         sampling_budget: int = 4,  # This stays fixed
+        lr=0.01,
     ):
         # self.device = torch.device("cuda")
         self.state_generator = state_generator
@@ -56,7 +128,7 @@ class MarkovianUniformEnvironment:
         self.optimizer = optim.Adam(
             list(self.sampling_arbiter.parameters())
             + list(self.reconstructor.parameters()),
-            lr=0.01,
+            lr=lr,
         )
 
         self.sampling_arbiter_last_weights = list(
