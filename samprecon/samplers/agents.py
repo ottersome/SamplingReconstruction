@@ -23,11 +23,11 @@ class Agent(ABC):
 
 
 class SimpleAgent(Agent, nn.Module):
-    def __init__(self, state_size: int, dec_range):
+    def __init__(self, sampling_budget: int, dec_range):
         super().__init__()
         self.dec_range = dec_range
         self.model = nn.Sequential(
-            nn.Linear(state_size, 32),
+            nn.Linear(sampling_budget, 32),
             nn.ReLU(),
             nn.Linear(32, 64),
             nn.ReLU(),

@@ -1,11 +1,11 @@
+import copy
 from logging import INFO
+from math import ceil
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import copy
-from math import ceil
 
 from samprecon.generators.bandlimited import BandlimitedGenerator
 from samprecon.reconstructors.NNReconstructors import NNReconstructor
@@ -72,9 +72,8 @@ class MarkovianUniformEnvironment:
         self.prev_state = (
             torch.Tensor(
                 self.state_generator.sample(self.last_action, self.sampling_budget)
-            )
-            .to(torch.float)
-            .view(length)
+            ).to(torch.float)
+            # .view(length)
         )
         self.criterion = nn.NLLLoss()
 
@@ -90,7 +89,7 @@ class MarkovianUniformEnvironment:
 
         # TODO: We may be able to change this into a cumulative gradient
         action: torch.Tensor = self.sampling_arbiter(
-            self.prev_state[:: int(self.last_action)]
+            self.prev_state[:: int(self.last_action)][: self.sampling_budget]
         ).view(1, -1)
 
         # New State
@@ -99,7 +98,7 @@ class MarkovianUniformEnvironment:
         ).to(torch.long)
 
         new_state_oh = F.one_hot(
-            new_state.view(1, -1).to(torch.long),
+            new_state.view(1, -1),  # .to(torch.long),
             num_classes=self.state_generator.max_state + 1,
         ).float()
 
@@ -108,7 +107,7 @@ class MarkovianUniformEnvironment:
         reconstruction = self.reconstructor(
             dec_state,
             action,
-            #1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
+            # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
         )
 
         loss = self.criterion(reconstruction.squeeze(), new_state)
