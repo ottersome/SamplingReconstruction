@@ -46,21 +46,21 @@ def generate_sigmoid_mask(
     decimation_intervals: npt.ArrayLike,
     sharpness=1,
 ):
-    masks = torch.zeros(batch_size, signal_length)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    masks = torch.zeros(batch_size, signal_length).to(device).to(device)
     for i in range(batch_size):
         for j in range(signal_length):
+            jeep = torch.Tensor([j]).to(device)
             distance_to_nearest_sample = torch.min(
-                torch.fmod(torch.tensor([j]), decimation_intervals[i]),
+                torch.fmod(jeep, decimation_intervals[i]),
                 # decimation_intervals[i]
-                torch.tensor(decimation_intervals[i])
-                - torch.fmod(torch.tensor([j]), decimation_intervals[i]),
+                torch.Tensor(decimation_intervals[i]).to(device)
+                - torch.fmod(jeep, decimation_intervals[i]),
             )
-            distance = torch.Tensor((distance_to_nearest_sample, 10))
+            distance = torch.Tensor((distance_to_nearest_sample, 10)).to(device)
             distance_m = torch.min(distance)
             exp = torch.exp(distance_m)
-            divisor = torch.min(torch.Tensor((exp, 1000)))
-            if divisor == 0:
-                print("What the fuck")
+            divisor = torch.min(torch.Tensor((exp, 1000)).to(device))
             masks[i, j] = 1 / divisor
 
     return masks

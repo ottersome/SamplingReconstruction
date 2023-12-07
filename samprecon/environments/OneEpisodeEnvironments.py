@@ -58,6 +58,7 @@ class MarkovianUniformCumulativeEnvironment:
         self.logger = setup_logger("MarkovianUniformEnvironment", INFO)
         self.done = False
         self.criterion = nn.NLLLoss()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def reset(self, default_dec_rate):
         initial_state = (
@@ -78,7 +79,7 @@ class MarkovianUniformCumulativeEnvironment:
         # New State
         new_state = torch.Tensor(
             self.state_generator.sample(action, self.sampling_budget)
-        )
+        ).to(self.device)
 
         new_state_oh = F.one_hot(
             new_state.view(1, -1).to(torch.long),

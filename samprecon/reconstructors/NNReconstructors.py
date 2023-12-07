@@ -42,7 +42,7 @@ class RNNReconstructor(nn.Module):
         # )
         mask = torch.ones(
             (1, subsampled_signal.shape[1]), dtype=torch.float32
-        ).unsqueeze(-1)
+        ).unsqueeze(-1).to(subsampled_signal.device)
         rate_cloned = (mask * rate) / self.max_decimation_rate
 
         x = torch.cat((subsampled_signal, rate_cloned), dim=-1)
@@ -51,7 +51,7 @@ class RNNReconstructor(nn.Module):
                 x.shape[0], -1, 1
             )
             / subsampled_signal.shape[1]
-        )
+        ).to(subsampled_signal.device)
         x = torch.cat((x, x_count), dim=-1)
         # Normalize on second dimension
 
