@@ -51,11 +51,19 @@ def generate_sigmoid_mask(
         for j in range(signal_length):
             distance_to_nearest_sample = torch.min(
                 torch.fmod(torch.tensor([j]), decimation_intervals[i]),
+                # decimation_intervals[i]
                 torch.tensor(decimation_intervals[i])
                 - torch.fmod(torch.tensor([j]), decimation_intervals[i]),
             )
             masks[i, j] = 1 / (
-                1 + torch.exp(-sharpness * (1 - distance_to_nearest_sample))
+                1
+                + torch.exp(
+                    torch.max(
+                        torch.Tensor(
+                            (-sharpness * (1 - distance_to_nearest_sample), 10.0)
+                        )
+                    )
+                )
             )
 
     return masks
@@ -64,11 +72,13 @@ def generate_sigmoid_mask(
 def differentiable_uniform_sampler(
     input_signals: torch.Tensor, decimation_interval: torch.Tensor
 ):
-    #batch_size, signal_length = input_signals.shape
+    # batch_size, signal_length = input_signals.shape
     signal_length = input_signals.shape[1]
-    #Esignal_length = len(input_signals)
-    batch_size = 1 # for now
-    mask = generate_sigmoid_mask(batch_size, signal_length, decimation_interval).view(1, -1, 1)
+    # Esignal_length = len(input_signals)
+    batch_size = 1  # for now
+    mask = generate_sigmoid_mask(batch_size, signal_length, decimation_interval).view(
+        1, -1, 1
+    )
     mask = mask.repeat_interleave(input_signals.shape[2], dim=2)
     if input_signals.is_cuda:
         mask = mask.cuda()

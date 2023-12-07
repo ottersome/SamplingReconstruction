@@ -10,6 +10,7 @@ class RNNReconstructor(nn.Module):
     def __init__(
         self,
         amnt_states: int,
+        max_decimation_rate: int,
     ):
         """
         Args:
@@ -20,6 +21,7 @@ class RNNReconstructor(nn.Module):
         """
         super().__init__()
         # Take a variable length scalar input signals
+        self.max_decimation_rate = max_decimation_rate
         self.hidden_size = amnt_states + 1 + 1  # One for rate and one for count
         self.rnn = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
         self.classifier = nn.Linear(self.hidden_size, amnt_states)
@@ -29,20 +31,34 @@ class RNNReconstructor(nn.Module):
         self,
         subsampled_signal: torch.Tensor,
         rate: torch.Tensor,
-        reconstruct_length: int,
+        #reconstruct_length: int,
     ):
         # Append subsampled_signal, rate, reconstruct_length
-        rate_interleaved = rate.repeat_interleave(reconstruct_length, dim=1).unsqueeze(-1)
-        x = torch.cat((subsampled_signal, rate_interleaved), dim=-1)
-        x_count = torch.flip(torch.arange(reconstruct_length), [0]).view(
-            x.shape[0], -1, 1
-        )
-        x = torch.cat((x, x_count), dim=-1)
+        # rate_cloned = rate.repeat_interleave(reconstruct_length, dim=1).unsqueeze(
+        # -1
+        # )
+        mask = torch.ones((1, subsampled_signal.shape[1]), dtype=torch.float32).unsqueeze(-1)
+        rate_cloned = (mask * rate) / self.max_decimation_rate
 
-        out,hiddn = self.rnn(x) # Check what is the difference between, out and hiddn
+        x = torch.cat((subsampled_signal, rate_cloned), dim=-1)
+        x_count = torch.flip(torch.arange(subsampled_signal.shape[1]), [0]).view(
+            x.shape[0], -1, 1
+        )/subsampled_signal.shape[1]
+        x = torch.cat((x, x_count), dim=-1)
+        # Normalize on second dimension 
+
+        out, hiddn = self.rnn(x)  # Check what is the difference between, out and hiddn
         y = self.classifier(out)
         y = self.sm(y)
         return y
+    def initialize_grad_hooks(self):
+        for layer in self.modules():
+            if isinstance(layer, torch.nn.Linear):
+                layer.register_backward_hook(print_grad_hook)
+
+def print_grad_hook(module, grad_input, grad_output):
+    print("grad_input", grad_input)
+    print("grad_output", grad_output)   
 
 
 class NNReconstructor(Reconstructor, nn.Module):

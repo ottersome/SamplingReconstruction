@@ -1,3 +1,4 @@
+from math import ceil
 from typing import Dict, List
 
 import numpy as np
@@ -142,9 +143,9 @@ class BDStates:
         self.curr_history = [self.init_state]  # TODO: make this into a limited FIFO ?
 
     def sample(self, decimation_rate: int, sampling_budget: int) -> List:
-        length = int(decimation_rate * sampling_budget)
+        length = 1 + ceil(decimation_rate * (sampling_budget - 1))
         sample_list = [self.init_state]
-        for i in range(length-1):
+        for i in range(length - 1):
             new_state = np.random.choice(
                 np.arange(self.max_state + 1), p=self.P[sample_list[-1], :]
             ).squeeze()
