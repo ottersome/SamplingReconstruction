@@ -94,13 +94,13 @@ class MarkovianUniformCumulativeEnvironment:
             # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
         )
         logsoft_recon = F.log_softmax(reconstruction.squeeze(), dim=-1)
-        reward = -self.criterion(logsoft_recon.squeeze(), new_state.to(torch.long))
+        regret = self.criterion(logsoft_recon.squeeze(), new_state.to(torch.long))
 
         # self.prev_state = new_state.to(torch.float)
 
         return (
             new_state[:: int(action)][: self.sampling_budget].view(1, -1),
-            reward,
+            regret,
             self.done,
         )
 
@@ -195,9 +195,9 @@ class MarkovianUniformEnvironment:
             differences.append(
                 torch.sum(torch.abs(v - self.sampling_arbiter_last_weights[i]))
             )
-        differences_arbitrer = torch.sum(torch.Tensor(differences))
-        # self.logger.info(f"Sum of weight difference arbiterer{differences:.8f}")
-        # Hard copy last weights
+        differences_arbitrer = torch.sum(torch.tensor(differences))
+        # self.logger.info(f"sum of weight difference arbiterer{differences:.8f}")
+        # hard copy last weights
         self.sampling_arbiter_last_weights = [
             copy.deepcopy(v) for v in self.sampling_arbiter.state_dict().values()
         ]
