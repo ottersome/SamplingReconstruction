@@ -1,6 +1,16 @@
 {
   "configurations": [
     {
+      "name": "exp3.6",
+      "type": "python",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "python": "/Users/rac716/miniforge3/envs/rs39/bin/python",
+      "stopOnEntry": false,
+      "debugOptions": [],
+      "program": "/Users/rac716/Research/SamplingReconstruction/exp3-6.py"
+    },
+    {
       "name": "exp2.5",
       "type": "python",
       "request": "launch",

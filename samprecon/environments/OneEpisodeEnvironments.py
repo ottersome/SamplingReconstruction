@@ -65,7 +65,7 @@ class MarkovianUniformCumulativeEnvironment:
         initial_state = (
             torch.Tensor(
                 self.state_generator.sample(default_dec_rate, self.sampling_budget)
-            ).to(torch.float)[::default_dec_rate]
+            ).to(torch.float)[::int(default_dec_rate)]
         )[: self.sampling_budget]
         return initial_state
 
