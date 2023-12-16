@@ -24,14 +24,17 @@ class Agent(ABC):
 
 
 class SoftmaxAgent(Agent, nn.Module):
+    """
+    This one will take a whole range of decimation rates it can freely choose from
+    """
+
     def __init__(self, sampling_budget: int, dec_range):
         super().__init__()
         self.dec_range = dec_range
         self.model = nn.Sequential(
-            nn.Linear(sampling_budget, 32),
+            nn.Linear(sampling_budget, 128),
             nn.ReLU(),
-            nn.Linear(32, 64),
-            nn.ReLU(),
+            nn.Linear(128, 64),
             nn.Linear(64, dec_range),  # Keep it as regression for now
         )
 

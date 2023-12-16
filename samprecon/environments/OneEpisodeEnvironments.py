@@ -46,6 +46,7 @@ class MarkovianUniformCumulativeEnvironment:
     ):
         # self.device = torch.device("cuda")
         self.state_generator = state_generator
+        self.num_states = state_generator.max_state + 1
         self.cur_decimation_rate = starting_decrate
         self.sampling_budget = sampling_budget
         # Modules
@@ -92,9 +93,10 @@ class MarkovianUniformCumulativeEnvironment:
             dec_state,
             action,
             # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
-        )
-        logsoft_recon = F.log_softmax(reconstruction.squeeze(), dim=-1)
-        regret = self.criterion(logsoft_recon.squeeze(), new_state.to(torch.long))
+        ).squeeze(0)
+
+        logsoft_recon = F.log_softmax(reconstruction, dim=-1)
+        regret = self.criterion(logsoft_recon, new_state.to(torch.long))
 
         # self.prev_state = new_state.to(torch.float)
 
