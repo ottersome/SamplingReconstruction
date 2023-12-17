@@ -140,7 +140,7 @@ class BDStates:
         self.init_state = 0
         self.max_state = self.P.shape[0] - 1
 
-        self.curr_history = [self.init_state]  # TODO: make this into a limited FIFO ?
+        # self.curr_history = [self.init_state]  # TODO: make this into a limited FIFO ?
 
     def sample(self, decimation_rate: int, sampling_budget: int) -> List:
         length = 1 + ceil(decimation_rate * (sampling_budget - 1))
@@ -150,8 +150,8 @@ class BDStates:
                 np.arange(self.max_state + 1), p=self.P[sample_list[-1], :]
             ).squeeze()
             sample_list.append(new_state)
-        self.cur_history = sample_list
-        return self.cur_history
+        # self.cur_history = sample_list
+        return sample_list
 
 
 class EmbeddedMarkC_BD(SPManager):

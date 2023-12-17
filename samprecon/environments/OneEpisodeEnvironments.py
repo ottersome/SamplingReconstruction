@@ -1,7 +1,8 @@
 import copy
+from abc import ABC, abstractmethod
 from logging import INFO
 from math import ceil
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
@@ -19,19 +20,96 @@ from samprecon.samplers.spatial_transformers import (
 from samprecon.utils.utils import setup_logger
 from sp_sims.simulators.stochasticprocesses import BDStates
 
-"""
-No concept of Markovian chains here. 
-Only one step
-"""
+# TOREM : I dont think this is beign used at all
+# class Model(nn.Module):
+#     def __init__(self):
+#         self.reconstructor = reconstructor
+#         self.sampling_optimizer = sampling_optimizer
+#
+#     def forward(self, x):
+#         return self.reconstructor(self.sampling_optimizer.act(x))
 
 
-class Model(nn.Module):
-    def __init__(self):
-        self.reconstructor = reconstructor
-        self.sampling_optimizer = sampling_optimizer
+class Environment(ABC):
+    def __init__(self, state_shape):
+        pass
 
-    def forward(self, x):
-        return self.reconstructor(self.sampling_optimizer.act(x))
+    @abstractmethod
+    def step(self, prev_state, action):
+        pass
+
+    @abstractmethod
+    def reset(self):
+        pass
+
+    # Define abstract property
+    @property
+    def state_shape(self):
+        pass
+
+
+class MarkovianDualCumulativeEnvironment(Environment):
+    def __init__(
+        self,
+        hyp0_rates: Dict[str, float],
+        hyp1_rates: Dict[str, float],
+        sampling_budget: int,
+        highest_frequency: float,
+        num_states: int,
+        decimation_ranges: List[int],
+        selection_probabilities: List[float],
+        parallel_paths: int,
+    ):
+        self.hyp0_rates = hyp0_rates
+        self.hyp1_rates = hyp1_rates
+        self.num_states = num_states
+        self.sampling_budget = sampling_budget
+        self.parallel_paths = parallel_paths
+        self.selection_probabilities = torch.Tensor(selection_probabilities)
+        self.decimation_ranges = decimation_ranges
+        self.hypgens = [
+            BDStates(self.hyp0_rates, highest_frequency, num_states, init_state=0),
+            BDStates(self.hyp1_rates, highest_frequency, num_states, init_state=0),
+        ]
+
+        self.logger = setup_logger("MarkovianDualCumulativeEnvironment", INFO)
+
+    def step(self, prev_state, action):
+        pass
+        # Look at prev_state and
+
+    def reset(self):
+        # TODO: for now we are using initial state of 0
+        rdr = self._gen_random_decimation_rate()
+        # Based on decimation rate we estimate length
+        lengths = (self.sampling_budget - 1) * rdr + 1
+        max_len = torch.max(lengths)
+        # TODO: watch out for init state
+        paths = torch.zeros((self.parallel_paths, max_len.item())).to(torch.long)  # type: ignore
+        for step in range(paths.shape[1]):
+            paths[:, step] = self._single_state_step(paths[:, -1]).squeeze()
+        # Then we decimate the paths
+        decimated_paths = [paths[i,::r][:self.sampling_budget].tolist() for i,r in enumerate(rdr.squeeze())]
+        return decimated_paths
+
+    def _single_state_step(self, last_states: torch.Tensor):
+        hyp_gen = torch.multinomial(
+            self.selection_probabilities, self.parallel_paths, replacement=True
+        ).view(-1, 1)
+        possible_probabilities = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
+        selection_probabilities = possible_probabilities[
+            hyp_gen.squeeze(), last_states.squeeze(), :
+        ]
+        next_states = torch.multinomial(selection_probabilities, 1)
+        return next_states
+
+    def _gen_random_decimation_rate(self) -> torch.Tensor:
+        mid_point = (self.decimation_ranges[1] + self.decimation_ranges[0]) // 2
+        length = self.decimation_ranges[1] - self.decimation_ranges[0] + 1
+        low = mid_point - length // 10
+        high = mid_point + length // 10
+        decimation_rates = torch.randint(low, high, (1, self.parallel_paths))
+        return decimation_rates
 
 
 class MarkovianUniformCumulativeEnvironment:
@@ -65,7 +143,7 @@ class MarkovianUniformCumulativeEnvironment:
         initial_state = (
             torch.Tensor(
                 self.state_generator.sample(default_dec_rate, self.sampling_budget)
-            ).to(torch.float)[::int(default_dec_rate)]
+            ).to(torch.float)[:: int(default_dec_rate)]
         )[: self.sampling_budget]
         return initial_state
 
@@ -107,6 +185,7 @@ class MarkovianUniformCumulativeEnvironment:
         )
 
 
+# %%
 class MarkovianUniformEnvironment:
     def __init__(
         self,
@@ -223,6 +302,7 @@ class MarkovianUniformEnvironment:
         return loss.item(), tqdm_bar_info
 
 
+# %%
 class OneEpisodeWeightedEnvironment:
     def __init__(
         self,
