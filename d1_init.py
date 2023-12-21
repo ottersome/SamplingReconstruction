@@ -28,6 +28,7 @@ from samprecon.environments.OneEpisodeEnvironments import (
     MarkovianDualCumulativeEnvironment,
 )
 from samprecon.memory.replaymemory import ReplayBuffer
+from samprecon.samplers.agents import SoftmaxAgent
 
 # %% [markdown]
 # ## Setup all Constants
@@ -35,6 +36,10 @@ from samprecon.memory.replaymemory import ReplayBuffer
 # %% [python]
 hyp0_baseline_rates = {"lam": 1 / 10, "mu": 4 / 10}
 hyp1_baseline_rates = {"lam": 4 / 10, "mu": 4 / 10}
+
+# Steering Wheel
+sampling_controls = [-8, -4, -2, -1, 0, 1, 2, 4, 8]
+
 sampling_budget = 10
 highest_frequency = 1e-0
 num_states = 4
@@ -51,15 +56,20 @@ decimation_ranges = [1, avg_timespan // highest_frequency * 4]
 
 # %% [python]
 
+# Setup the Agent
+sampling_agent = SoftmaxAgent(sampling_budget, len(sampling_controls))
+
+# Setup The Environment
 dual_env = MarkovianDualCumulativeEnvironment(
     hyp0_rates=hyp0_baseline_rates,
     hyp1_rates=hyp1_baseline_rates,
+    sampling_agent=sampling_agent,
     sampling_budget=10,
     highest_frequency=highest_frequency,
     num_states=num_states,
     decimation_ranges=decimation_ranges,
     selection_probabilities=[0.5, 0.5],
-    parallel_paths=4,
+    batch_size=4,
 )
 
 # TODO: create a Q-Function Model

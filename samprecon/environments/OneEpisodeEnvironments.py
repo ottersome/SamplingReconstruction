@@ -14,7 +14,9 @@ from samprecon.reconstructors.NNReconstructors import NNReconstructor
 from samprecon.reconstructors.reconstruct_intf import Reconstructor
 from samprecon.samplers.agents import Agent
 from samprecon.samplers.spatial_transformers import (
-    LocalizationNework, differentiable_uniform_sampler)
+    LocalizationNework,
+    differentiable_uniform_sampler,
+)
 from samprecon.utils.utils import setup_logger
 from sp_sims.detectors.pearsonneyman import take_guesses
 from sp_sims.simulators.stochasticprocesses import BDStates
@@ -52,19 +54,24 @@ class MarkovianDualCumulativeEnvironment(Environment):
         self,
         hyp0_rates: Dict[str, float],
         hyp1_rates: Dict[str, float],
-        sampling_agent: Agent,
+        sampling_agent: nn.Module,
+        high_res_frequency: float,
         sampling_budget: int,
         highest_frequency: float,
         num_states: int,
         decimation_ranges: List[int],
         selection_probabilities: List[float],
-        parallel_paths: int,
+        batch_size: int,
+        episode_length: int,
     ):
+        self.sampling_agent = sampling_agent
         self.hyp0_rates = hyp0_rates
         self.hyp1_rates = hyp1_rates
+        self.high_res_frequency = high_res_frequency
+        self.episode_length = episode_length
         self.num_states = num_states
         self.sampling_budget = sampling_budget
-        self.parallel_paths = parallel_paths
+        self.batch_size = batch_size
         self.selection_probabilities = torch.Tensor(selection_probabilities)
         self.decimation_ranges = decimation_ranges
         self.hypgens = [
@@ -72,29 +79,6 @@ class MarkovianDualCumulativeEnvironment(Environment):
             BDStates(self.hyp1_rates, highest_frequency, num_states, init_state=0),
         ]
         self.logger = setup_logger("MarkovianDualCumulativeEnvironment", INFO)
-        self.hypothesis_selection = None
-
-    def step(self, cur_state, action):
-        assert self.hypothesis_selection != None, "Make sure you reset environment after it finishes"
-        # Take action
-        actions = sampling_agent(cur_state)
-        # Look at prev_state and
-        # Calcualte regret based on Likelihood Ratio
-        new_state = self._calculate_step(actions)
-        regret = self._calculate_regret()
-        
-        # TODO: check for final condition (maybe nth step) and set hypothesis_selection=None 
-        return regret, new_state
-
-    def _calculate_regret(self, paths):
-        # First get the corresponding probabilities
-        #probabilities = [hg.P for hg in self.hypgens]
-        # TODO: not like above, get probabilities under decimation rate.
-
-        # TODO: consider power of the test and all other nuances that we are ignoring for now
-        gueses = take_guesses()
-
-    def _calculate_step(self, actions: torch.Tensor):
 
     def reset(self):
         """
@@ -104,26 +88,100 @@ class MarkovianDualCumulativeEnvironment(Environment):
             - chosen initial decimation rates
             - chosen initial hypothesis at random
         """
+        assert (
+            self.hypothesis_selection != None and self.cur_step != None
+        ), "Make sure you reset environment after it finishes"
+
         # TODO: for now we are using initial state of 0
         hypothesis_selection = torch.multinomial(
-            self.selection_probabilities, self.parallel_paths, replacement=True
+            self.selection_probabilities, self.batch_size, replacement=True
         ).view(-1, 1)
         rdr = self._gen_random_decimation_rate()
         # Based on decimation rate we estimate length
-        lengths = (self.sampling_budget - 1) * rdr + 1
+        init_states = torch.zeros((self.batch_size, max_len.item())).to(torch.long)  # type: ignore
+
+        new_state = self._generate_decimated_observation(
+            rdr, init_states, hypothesis_selection
+        )
+        self.cur_step = 0
+
+        return new_state, rdr, hypothesis_selection
+
+    def step(self, cur_state, action):
+        """
+        Arguments
+        ~~~~~~~~~
+            cur_state:
+                Rows will be for batch samples.
+                Every row will contain: (hypothesis_selection + cur_rate + decimated_path)
+                Where we only present the agent cur_rate + decimated_path and use hypothesis_selection for management
+        """
+        assert len(cur_state.shape) == 2 and len(
+            cur_state.shape[1] == 2 + self.sampling_budget
+        ), "Incorrect input cur_state"
+
+        cur_hyp = cur_state[:, 0]
+        obs_state = cur_state[:, 1:]
+        cur_periods = cur_state[:, 1]
+
+        # Take action
+        actions = self.sampling_agent(cur_state)  # Forward
+        new_periods = cur_periods + actions
+
+        new_state = self._generate_decimated_observation(
+            new_periods, obs_state, cur_hyp
+        )
+
+        regret = self._calculate_regret(new_state, hyps)
+
+        self.cur_step += 1
+        if self.cur_step == self.episode_length:
+            self._blank_slate()
+
+        # TODO: check for final condition (maybe nth step) and set hypothesis_selection=None
+        return regret, new_state
+
+    def _blank_slate(self):
+        self.hypothesis_selection = None
+        self.total_path = None
+
+    def _calculate_regret(self, new_state, cur_hyp):
+        # First get the corresponding probabilities
+        # probabilities = [hg.P for hg in self.hypgens]
+        # In comes (batch_size) x () x (sampling_budget)
+
+        # TODO: not like above, get probabilities under decimation rate.
+        # New State containas the
+        joint_probs = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
+        selection = joint_probs[cur_hyp,]
+
+        # TODO: consider power of the test and all other nuances that we are ignoring for now
+        gueses = take_guesses()
+
+    def _generate_decimated_observation(
+        self,
+        rates: torch.Tensor,  # (self.batch_size) x (1)
+        cur_state: torch.Tensor,  # (self.batch_size) x (self.sampling_budget)
+        true_hypotheses: torch.Tensor,  # (self.batch_size)  x (1)
+    ) -> torch.Tensor:
+        lengths = (self.sampling_budget - 1) * rates + 1
         max_len = torch.max(lengths)
-        # TODO: watch out for init state
-        paths = torch.zeros((self.parallel_paths, max_len.item())).to(torch.long)  # type: ignore
+
+        # TODO: See if just using an adjusted \theta * \Delta can make this faster and still be equivalent
         for step in range(paths.shape[1]):
             paths[:, step] = self._single_state_step(
-                paths[:, -1], hypothesis_selection
+                paths[:, -1], true_hypotheses
             ).squeeze()
+
         # Then we decimate the paths
-        decimated_paths = [
-            paths[i, ::r][: self.sampling_budget].tolist()
-            for i, r in enumerate(rdr.squeeze())
-        ]
-        return decimated_paths, rdr, hypothesis_selection
+        decimated_paths = torch.Tensor(
+            [
+                paths[i, ::r][: self.sampling_budget].tolist()
+                for i, r in enumerate(rates.squeeze())
+            ]
+        )
+
+        return decimated_paths
 
     def _single_state_step(
         self, last_states: torch.Tensor, hypothesis_selection: torch.Tensor
@@ -140,7 +198,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         length = self.decimation_ranges[1] - self.decimation_ranges[0] + 1
         low = mid_point - length // 10
         high = mid_point + length // 10
-        decimation_rates = torch.randint(low, high, (1, self.parallel_paths))
+        decimation_rates = torch.randint(low, high, (1, self.batch_size))
         return decimation_rates
 
 
