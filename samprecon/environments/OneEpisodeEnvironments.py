@@ -14,10 +14,9 @@ from samprecon.reconstructors.NNReconstructors import NNReconstructor
 from samprecon.reconstructors.reconstruct_intf import Reconstructor
 from samprecon.samplers.agents import Agent
 from samprecon.samplers.spatial_transformers import (
-    LocalizationNework,
-    differentiable_uniform_sampler,
-)
+    LocalizationNework, differentiable_uniform_sampler)
 from samprecon.utils.utils import setup_logger
+from sp_sims.detectors.pearsonneyman import take_guesses
 from sp_sims.simulators.stochasticprocesses import BDStates
 
 # TOREM : I dont think this is beign used at all
@@ -35,7 +34,7 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def step(self, prev_state, action):
+    def step(self, cur_state, action):
         pass
 
     @abstractmethod
@@ -44,7 +43,7 @@ class Environment(ABC):
 
     # Define abstract property
     @property
-    def state_shape(self):
+    def state_shape(self) -> torch.Tensor:  # type : ignore
         pass
 
 
@@ -53,6 +52,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         self,
         hyp0_rates: Dict[str, float],
         hyp1_rates: Dict[str, float],
+        sampling_agent: Agent,
         sampling_budget: int,
         highest_frequency: float,
         num_states: int,
@@ -71,15 +71,43 @@ class MarkovianDualCumulativeEnvironment(Environment):
             BDStates(self.hyp0_rates, highest_frequency, num_states, init_state=0),
             BDStates(self.hyp1_rates, highest_frequency, num_states, init_state=0),
         ]
-
         self.logger = setup_logger("MarkovianDualCumulativeEnvironment", INFO)
+        self.hypothesis_selection = None
 
-    def step(self, prev_state, action):
-        pass
+    def step(self, cur_state, action):
+        assert self.hypothesis_selection != None, "Make sure you reset environment after it finishes"
+        # Take action
+        actions = sampling_agent(cur_state)
         # Look at prev_state and
+        # Calcualte regret based on Likelihood Ratio
+        new_state = self._calculate_step(actions)
+        regret = self._calculate_regret()
+        
+        # TODO: check for final condition (maybe nth step) and set hypothesis_selection=None 
+        return regret, new_state
+
+    def _calculate_regret(self, paths):
+        # First get the corresponding probabilities
+        #probabilities = [hg.P for hg in self.hypgens]
+        # TODO: not like above, get probabilities under decimation rate.
+
+        # TODO: consider power of the test and all other nuances that we are ignoring for now
+        gueses = take_guesses()
+
+    def _calculate_step(self, actions: torch.Tensor):
 
     def reset(self):
+        """
+        returns
+        -------
+            - decimated paths: Decimated paths after undergoing decimation
+            - chosen initial decimation rates
+            - chosen initial hypothesis at random
+        """
         # TODO: for now we are using initial state of 0
+        hypothesis_selection = torch.multinomial(
+            self.selection_probabilities, self.parallel_paths, replacement=True
+        ).view(-1, 1)
         rdr = self._gen_random_decimation_rate()
         # Based on decimation rate we estimate length
         lengths = (self.sampling_budget - 1) * rdr + 1
@@ -87,18 +115,22 @@ class MarkovianDualCumulativeEnvironment(Environment):
         # TODO: watch out for init state
         paths = torch.zeros((self.parallel_paths, max_len.item())).to(torch.long)  # type: ignore
         for step in range(paths.shape[1]):
-            paths[:, step] = self._single_state_step(paths[:, -1]).squeeze()
+            paths[:, step] = self._single_state_step(
+                paths[:, -1], hypothesis_selection
+            ).squeeze()
         # Then we decimate the paths
-        decimated_paths = [paths[i,::r][:self.sampling_budget].tolist() for i,r in enumerate(rdr.squeeze())]
-        return decimated_paths
+        decimated_paths = [
+            paths[i, ::r][: self.sampling_budget].tolist()
+            for i, r in enumerate(rdr.squeeze())
+        ]
+        return decimated_paths, rdr, hypothesis_selection
 
-    def _single_state_step(self, last_states: torch.Tensor):
-        hyp_gen = torch.multinomial(
-            self.selection_probabilities, self.parallel_paths, replacement=True
-        ).view(-1, 1)
+    def _single_state_step(
+        self, last_states: torch.Tensor, hypothesis_selection: torch.Tensor
+    ):
         possible_probabilities = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
         selection_probabilities = possible_probabilities[
-            hyp_gen.squeeze(), last_states.squeeze(), :
+            hypothesis_selection.squeeze(), last_states.squeeze(), :
         ]
         next_states = torch.multinomial(selection_probabilities, 1)
         return next_states

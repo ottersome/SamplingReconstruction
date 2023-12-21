@@ -1,4 +1,7 @@
+from typing import List
+
 import numpy as np
+import torch
 
 
 def take_a_guess(tape, p0, p1):
@@ -10,6 +13,16 @@ def take_a_guess(tape, p0, p1):
         num += np.log(p0[from_state, to_state])
         denum += np.log(p1[from_state, to_state])
     return 0 if num > denum else 1
+
+
+def take_guesses(
+    paths: torch.Tensor,
+    labels: torch.Tensor,
+    p0: List[List[float]],
+    p1: List[List[float]],
+):
+    nums = torch.zeros((paths.shape[0], 1))
+    denums = torch.zeros((paths.shape[0], 1))
 
 
 # A Bit better for memory

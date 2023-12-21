@@ -27,6 +27,7 @@ import torch
 from samprecon.environments.OneEpisodeEnvironments import (
     MarkovianDualCumulativeEnvironment,
 )
+from samprecon.memory.replaymemory import ReplayBuffer
 
 # %% [markdown]
 # ## Setup all Constants
@@ -61,9 +62,13 @@ dual_env = MarkovianDualCumulativeEnvironment(
     parallel_paths=4,
 )
 
+# TODO: create a Q-Function Model
+
+replay_buffer = ReplayBuffer(
+    sampbudget=sampling_budget, environment=dual_env, buffer_size=128
+)
+
 # %% [markdown]
 # # Executions
 
 # %% [python]
-
-dual_env.reset()

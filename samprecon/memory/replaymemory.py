@@ -7,13 +7,33 @@ from collections import deque, namedtuple
 
 import torch
 
-Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
+from samprecon.environments.OneEpisodeEnvironments import (
+    Environment,
+    MarkovianDualCumulativeEnvironment,
+)
+
+Transition = namedtuple("Transition", ("state", "action", "next_state", "regret"))
 
 
 class ReplayBuffer:
-    def __init__(self, sampbudget, environment, buffer_size=None):
+    """
+    Samples stored herein will not be dependent on the policy.
+    As it is *paths*, that exhibit this dependency, not individual (s,a,s',r).
+    Those are entirely dependent on the environment.
+    """
+
+    def __init__(
+        self,
+        sampbudget: int,
+        path_length: int,
+        environment: Environment,
+        buffer_size=None,
+    ):
         self.sampbudget = sampbudget
+        self.path_length = path_length
         self.memory = deque(maxlen=buffer_size)
+        self.environment = environment
+        self.state_shape = environment.state_shape
 
         # Calculate Furthest Sample
 
@@ -50,67 +70,45 @@ class ReplayBuffer:
         return len(self.memory)
 
     def populate_replay_buffer(
-        self, num_of_examples, samp_method="uniform", guesses_per_rate=1000
+        self,
+        policy: torch.nn.Module,
+        num_of_paths: int,
+        guesses_per_rate=1000,
     ):
-        ## Start By Generating States
-        # TODO: Maybe Try Uniform
-        # Make Sure lam > mu
-        # rates0[torch.chat(idcs, torch.ones((num_of_examples,1)))] = rates0[idcs:0] + 1
-
-        # Generate some random sampling rates
-        rates = gen_rates_bd(samp_method, num_of_examples)
-        rates0, rates1 = rates
-
+        """
+        We would ideally like to run this every time we get a significant change in our policy.
+        Otherwise the samples added will be similar.
+        """
         # Get Errors  # ACTIONS
-        smp_rates = np.random.uniform(0, 2**8, num_of_examples)  # Actions
-        errors = [0] * len(smp_rates)  # Amount of errors per action
+        chose_hypothesis = torch.randint(2, (num_of_paths, 1))
+        regrets = [0] * len(smp_rates)  # Amount of errors per action
 
         # TODO: PArallelize this through threads
-        for i in range(num_of_examples):  # For Every State-Action
-            # print('Samp Rate {} thus windows {}'.format(smp_rates[i],self.sampbudget*(1/smp_rates[i])))
-            true_hyps = np.random.choice(
-                2, guesses_per_rate
-            )  # Prepare for the amount of ensuing errors
+        for i in range(num_of_paths):  # For Every State-Action
+            # Generate Initial States
+            cur_paths, cur_dec_rates = self.environment.reset()
 
-            p0 = expm(
-                (1 / smp_rates[i])
-                * np.array(
-                    [[-rates0[i, 0], rates0[i, 0]], [rates0[i, 1], -rates0[i, 1]]]
-                )
-            )  # 0=lam, 1=mu
-            p1 = expm(
-                (1 / smp_rates[i])
-                * np.array(
-                    [[-rates1[i, 0], rates1[i, 0]], [rates1[i, 1], -rates1[i, 1]]]
-                )
-            )
+            # Travel the Path with Current Policy.
+            for step_no in range(self.path_length):
+                # Take an action after observing the environment
+                cur_states = torch.cat((cur_paths, cur_dec_rates), dim=-1)
+                cur_actions = policy(cur_states)
 
+                cur_states, dec_rates = self.environment()
+
+            # Do Guesses
             for j in range(guesses_per_rate):  # Sample a bunch of paths
-                roe = RaceOfExponentials(
-                    self.sampbudget * (1 / smp_rates[i]),
-                    rates[true_hyps[j]][i],
-                    max_state=1,
-                )  # TODO Remove that hardcoded 1
-                holdTimes_tape, state_tape = roe.generate_history(
-                    0
-                )  # TODO here I am hardcoding the initial state
-                # Action Performance(Sampling At Rate)
-                # tape = quick_sample(smp_rates[i],state_tape,holdTimes_tape,args2.num_samples)
-                tmpSampTape, replicas = quick_sample_budget(
-                    smp_rates[i], state_tape, holdTimes_tape, budget=self.sampbudget
-                )
-
                 # Get the corresponding Losses
                 # TODO: Maybe scale down the errors /kj
-                errors[i] += (
+                regrets[i] += (
                     multiplicity_guess(tmpSampTape, replicas, p0, p1) != true_hyps[j]
                 )
 
-        errors = np.array(errors) / guesses_per_rate
+        regrets = np.array(regrets) / guesses_per_rate
         # errors = np.array(errors)
 
-        for i in range(num_of_examples):
-            self.add(list(rates0[i]) + list(rates1[i]), smp_rates[i], errors[i])
+        for i in range(num_of_paths):
+            self.add(list(rates0[i]) + list(rates1[i]), smp_rates[i], regrets[i])
 
     def add_actions_to_buffer(self, states, actions, guesses_per_rate=1000):
         errors = [0] * len(actions)  # Amount of errors per action
