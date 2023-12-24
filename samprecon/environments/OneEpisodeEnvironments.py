@@ -2,7 +2,7 @@ import copy
 from abc import ABC, abstractmethod
 from logging import INFO
 from math import ceil
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -36,7 +36,7 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def step(self, cur_state, action):
+    def step(self, cur_state, action) -> Tuple[float, torch.Tensor]:
         pass
 
     @abstractmethod
@@ -54,7 +54,6 @@ class MarkovianDualCumulativeEnvironment(Environment):
         self,
         hyp0_rates: Dict[str, float],
         hyp1_rates: Dict[str, float],
-        sampling_agent: nn.Module,
         high_res_frequency: float,
         sampling_budget: int,
         highest_frequency: float,
@@ -64,7 +63,6 @@ class MarkovianDualCumulativeEnvironment(Environment):
         batch_size: int,
         episode_length: int,
     ):
-        self.sampling_agent = sampling_agent
         self.hyp0_rates = hyp0_rates
         self.hyp1_rates = hyp1_rates
         self.high_res_frequency = high_res_frequency
@@ -80,6 +78,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
         ]
         self.logger = setup_logger("MarkovianDualCumulativeEnvironment", INFO)
 
+        # Blacnk slate
+        self.cur_step = None
+
     def reset(self):
         """
         returns
@@ -89,7 +90,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
             - chosen initial hypothesis at random
         """
         assert (
-            self.hypothesis_selection != None and self.cur_step != None
+            self.cur_step == None
         ), "Make sure you reset environment after it finishes"
 
         # TODO: for now we are using initial state of 0
@@ -98,16 +99,18 @@ class MarkovianDualCumulativeEnvironment(Environment):
         ).view(-1, 1)
         rdr = self._gen_random_decimation_rate()
         # Based on decimation rate we estimate length
-        init_states = torch.zeros((self.batch_size, max_len.item())).to(torch.long)  # type: ignore
+        # lengths = 1 + (self.sampling_budget - 1) * rdr
+        # max_len
+        init_states = torch.zeros((self.batch_size, 1)).to(torch.long)  # type: ignore
 
         new_state = self._generate_decimated_observation(
             rdr, init_states, hypothesis_selection
-        )
+        ).to(torch.long)
         self.cur_step = 0
 
-        return new_state, rdr, hypothesis_selection
+        return new_state, rdr.view(self.batch_size, -1), hypothesis_selection
 
-    def step(self, cur_state, action):
+    def step(self, cur_state, actions):
         """
         Arguments
         ~~~~~~~~~
@@ -116,33 +119,35 @@ class MarkovianDualCumulativeEnvironment(Environment):
                 Every row will contain: (hypothesis_selection + cur_rate + decimated_path)
                 Where we only present the agent cur_rate + decimated_path and use hypothesis_selection for management
         """
-        assert len(cur_state.shape) == 2 and len(
-            cur_state.shape[1] == 2 + self.sampling_budget
+        assert (
+            len(cur_state.shape) == 2
+            and cur_state.shape[1] == 2 + self.sampling_budget
+            and self.cur_step != None
         ), "Incorrect input cur_state"
 
         cur_hyp = cur_state[:, 0]
-        obs_state = cur_state[:, 1:]
         cur_periods = cur_state[:, 1]
+        obs_state = cur_state[:, 1:]
 
-        # Take action
-        actions = self.sampling_agent(cur_state)  # Forward
-        new_periods = cur_periods + actions
+        new_periods = (cur_periods + actions).clamp(1, self.decimation_ranges[-1])
 
-        new_state = self._generate_decimated_observation(
+        new_dec_path = self._generate_decimated_observation(
             new_periods, obs_state, cur_hyp
         )
+        new_state = torch.cat((new_periods.unsqueeze(-1), new_dec_path), dim=-1)
 
-        regret = self._calculate_regret(new_state, hyps)
+        # Calculate Regret
+        regret = self._calculate_regret(new_dec_path, cur_hyp)
 
         self.cur_step += 1
-        if self.cur_step == self.episode_length:
-            self._blank_slate()
 
-        # TODO: check for final condition (maybe nth step) and set hypothesis_selection=None
+        if self.cur_step == self.episode_length:
+            self._blank_slate()  # CHECK: for correctness
+
         return regret, new_state
 
     def _blank_slate(self):
-        self.hypothesis_selection = None
+        # self.hypothesis_selection = None
         self.total_path = None
 
     def _calculate_regret(self, new_state, cur_hyp):
@@ -153,10 +158,12 @@ class MarkovianDualCumulativeEnvironment(Environment):
         # TODO: not like above, get probabilities under decimation rate.
         # New State containas the
         joint_probs = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
-        selection = joint_probs[cur_hyp,]
+        prev_steps = new_state[:-1]
+        next_steps = new_state[1:]
+        selection = joint_probs[cur_hyp, prev_steps, next_steps]
 
         # TODO: consider power of the test and all other nuances that we are ignoring for now
-        gueses = take_guesses()
+        # gueses = take_guesses()
 
     def _generate_decimated_observation(
         self,
@@ -168,9 +175,14 @@ class MarkovianDualCumulativeEnvironment(Environment):
         max_len = torch.max(lengths)
 
         # TODO: See if just using an adjusted \theta * \Delta can make this faster and still be equivalent
-        for step in range(paths.shape[1]):
+
+        # We first generate the paths. One step at a time
+        paths = torch.empty((self.batch_size, int(max_len)), dtype=torch.long)
+        paths[:, 0] = cur_state[:, -1]
+        # CHECK: For correctness
+        for step in range(1, paths.shape[1]):
             paths[:, step] = self._single_state_step(
-                paths[:, -1], true_hypotheses
+                paths[:, step - 1], true_hypotheses
             ).squeeze()
 
         # Then we decimate the paths
@@ -238,12 +250,6 @@ class MarkovianUniformCumulativeEnvironment:
         return initial_state
 
     def step(self, action: torch.Tensor) -> Dict[str, Any]:
-        """
-        Args:
-        Returns:
-            Stats to display
-        """
-
         # TODO: We may be able to change this into a cumulative gradient
         # New State
         new_state = torch.Tensor(

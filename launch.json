@@ -1,6 +1,16 @@
 {
   "configurations": [
     {
+      "name": "new",
+      "type": "python",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "python": "/home/ottersome/miniconda3/envs/research/bin/python",
+      "stopOnEntry": false,
+      "debugOptions": [],
+      "program": "/home/ottersome/Research/SamplingReconstruction/d1_init.py"
+    },
+    {
       "name": "exp3.6",
       "type": "python",
       "request": "launch",

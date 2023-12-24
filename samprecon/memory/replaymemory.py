@@ -4,8 +4,11 @@ Just a class that will be useful for RL replay memory
 
 import random
 from collections import deque, namedtuple
+from math import ceil
+from typing import List
 
 import torch
+import torch.nn.functional as F
 
 from samprecon.environments.OneEpisodeEnvironments import (
     Environment,
@@ -27,13 +30,22 @@ class ReplayBuffer:
         sampbudget: int,
         path_length: int,
         environment: Environment,
+        sampling_controls,
+        decimation_ranges,
         buffer_size=None,
+        batch_size=4,
     ):
+        self.decimation_ranges = decimation_ranges
+        self.sampling_controls = sampling_controls
         self.sampbudget = sampbudget
         self.path_length = path_length
         self.memory = deque(maxlen=buffer_size)
         self.environment = environment
         self.state_shape = environment.state_shape
+
+        # Mostly for memory control
+        self.batch_size = batch_size
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Calculate Furthest Sample
 
@@ -72,8 +84,74 @@ class ReplayBuffer:
     def populate_replay_buffer(
         self,
         policy: torch.nn.Module,
+        num_samples: int,
+    ):
+        # Number of batches
+        num_batches = ceil(num_samples / self.batch_size)
+
+        # Generated and to be saved for posterity
+        gen_regrets = torch.zeros((num_samples, self.path_length))
+        for batch_num in range(num_batches):
+            # Generate the initial_states
+            batch_offset = batch_num * self.batch_size
+            dis_batch_size = (
+                self.batch_size
+                if batch_num != num_batches - 1
+                else num_samples % self.batch_size
+            )
+            cur_state, cur_periods, hyp_selct = self.environment.reset()
+
+            # Repeat hyp_selct across dimension 2
+            # rdr_rpt = rdr.repeat_interleave(
+            #     self.sampbudget,
+            #     dim=1,
+            # ).unsqueeze(-1)
+            # cur_state_oh = F.one_hot(cur_state, num_classes=self.environment.num_states)  # type: ignore
+
+            useful_state = torch.cat((hyp_selct, cur_periods, cur_state), dim=-1).to(
+                torch.float
+            )
+            # Start the loop
+            for step in range(self.path_length):
+                # Decide on sampling rate
+                action_probs = policy(useful_state[:, 1:])
+                dist = torch.distributions.Categorical(action_probs)
+                sampled_action = (dist.sample()).to(self.device)
+                new_periods = torch.Tensor(
+                    [self.sampling_controls[a] for a in sampled_action.squeeze()]
+                ).to(torch.long)
+                # cur_periods += (
+                #     (
+                #         torch.Tensor(
+                #             [
+                #                 self.sampling_controls[a]
+                #                 for a in sampled_action.squeeze()
+                #             ]
+                #         )
+                #         .to(torch.long)
+                #         .to(self.device)
+                #     )
+                #     .clamp(min=1, max=self.decimation_ranges[-1])
+                #     .view(self.batch_size, -1)
+                # )
+                # useful_state = torch.cat(
+                #     (hyp_selct, cur_periods, cur_state), dim=-1
+                # ).to(torch.float)
+
+                # Obseve new state
+                regrets, new_states = self.environment.step(
+                    useful_state.to(torch.long), new_periods
+                )
+                useful_state = torch.cat((hyp_selct.unsqueeze(-1), new_states), dim=-1)
+                cur_periods = new_periods
+
+                # gen_regrets[batch_offset : batch_offset + dis_batch_size, :] = regrets
+
+    def _populate_replay_buffer(
+        self,
+        policy: torch.nn.Module,
         num_of_paths: int,
-        guesses_per_rate=1000,
+        # guesses_per_rate=1000, # This is to be phased out
     ):
         # TODO: we might want to look ta  this actor-crtioc
         """
@@ -82,12 +160,12 @@ class ReplayBuffer:
         """
         # Get Errors  # ACTIONS
         chose_hypothesis = torch.randint(2, (num_of_paths, 1))
-        regrets = [0] * len(smp_rates)  # Amount of errors per action
+        regrets = [0] * len(self.sampbudget)  # Amount of errors per action
 
         # TODO: PArallelize this through threads
         for i in range(num_of_paths):  # For Every State-Action
             # Generate Initial States
-            cur_paths, cur_dec_rates = self.environment.reset()
+            cur_paths, cur_dec_rates, hyps = self.environment.reset()
 
             # Travel the Path with Current Policy.
             for step_no in range(self.path_length):

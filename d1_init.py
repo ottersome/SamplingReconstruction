@@ -39,6 +39,7 @@ hyp1_baseline_rates = {"lam": 4 / 10, "mu": 4 / 10}
 
 # Steering Wheel
 sampling_controls = [-8, -4, -2, -1, 0, 1, 2, 4, 8]
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 sampling_budget = 10
 highest_frequency = 1e-0
@@ -49,7 +50,10 @@ avg_timespan = torch.mean(
         list(hyp0_baseline_rates.values()) + list(hyp1_baseline_rates.values())
     )
 )
-decimation_ranges = [1, avg_timespan // highest_frequency * 4]
+decimation_ranges = [1, int(avg_timespan // highest_frequency * 4)]
+episode_length = 12
+init_policy_sampling = 32
+batch_size = 4
 
 # %% [markdown]
 # ## Setup Environments
@@ -57,28 +61,38 @@ decimation_ranges = [1, avg_timespan // highest_frequency * 4]
 # %% [python]
 
 # Setup the Agent
-sampling_agent = SoftmaxAgent(sampling_budget, len(sampling_controls))
+sampling_agent = SoftmaxAgent(sampling_budget + 1, len(sampling_controls)).to(device)
 
 # Setup The Environment
 dual_env = MarkovianDualCumulativeEnvironment(
+    high_res_frequency=highest_frequency,
+    episode_length=episode_length,
     hyp0_rates=hyp0_baseline_rates,
     hyp1_rates=hyp1_baseline_rates,
-    sampling_agent=sampling_agent,
     sampling_budget=10,
     highest_frequency=highest_frequency,
     num_states=num_states,
     decimation_ranges=decimation_ranges,
     selection_probabilities=[0.5, 0.5],
-    batch_size=4,
+    batch_size=batch_size,
 )
 
 # TODO: create a Q-Function Model
 
 replay_buffer = ReplayBuffer(
-    sampbudget=sampling_budget, environment=dual_env, buffer_size=128
+    sampbudget=sampling_budget,
+    path_length=episode_length,
+    environment=dual_env,
+    decimation_ranges=decimation_ranges,
+    sampling_controls=sampling_controls,
+    buffer_size=128,
+    batch_size=batch_size,
 )
 
 # %% [markdown]
 # # Executions
 
 # %% [python]
+
+# Create some initial data using the initial policy
+replay_buffer.populate_replay_buffer(policy=sampling_agent, num_samples=32)
