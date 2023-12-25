@@ -78,6 +78,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
         ]
         self.logger = setup_logger("MarkovianDualCumulativeEnvironment", INFO)
 
+        # Regret criterion
+        self.criterion = nn.BCELoss(reduction="none")
+
         # Blacnk slate
         self.cur_step = None
 
@@ -118,6 +121,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
                 Rows will be for batch samples.
                 Every row will contain: (hypothesis_selection + cur_rate + decimated_path)
                 Where we only present the agent cur_rate + decimated_path and use hypothesis_selection for management
+        Returns
+        ~~~~~~~
+            new_state: [:,0] will be new current rates, [:,1:] will be observed decimated states
         """
         assert (
             len(cur_state.shape) == 2
@@ -133,8 +139,10 @@ class MarkovianDualCumulativeEnvironment(Environment):
 
         new_dec_path = self._generate_decimated_observation(
             new_periods, obs_state, cur_hyp
+        ).to(torch.long)
+        new_state = torch.cat((new_periods.unsqueeze(-1), new_dec_path), dim=-1).to(
+            torch.long
         )
-        new_state = torch.cat((new_periods.unsqueeze(-1), new_dec_path), dim=-1)
 
         # Calculate Regret
         regret = self._calculate_regret(new_dec_path, cur_hyp)
@@ -149,6 +157,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
     def _blank_slate(self):
         # self.hypothesis_selection = None
         self.total_path = None
+        self.cur_step = None
 
     def _calculate_regret(self, new_state, cur_hyp):
         # First get the corresponding probabilities
@@ -158,12 +167,29 @@ class MarkovianDualCumulativeEnvironment(Environment):
         # TODO: not like above, get probabilities under decimation rate.
         # New State containas the
         joint_probs = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
-        prev_steps = new_state[:-1]
-        next_steps = new_state[1:]
-        selection = joint_probs[cur_hyp, prev_steps, next_steps]
+        prev_steps = new_state[:, :-1]
+        next_steps = new_state[:, 1:]
+        format_hyp = cur_hyp.unsqueeze(-1).repeat_interleave(
+            new_state.shape[1] - 1, dim=1
+        )
+        selection_l0 = joint_probs[0, prev_steps, next_steps]
+        selection_l1 = joint_probs[1, prev_steps, next_steps]
 
-        # TODO: consider power of the test and all other nuances that we are ignoring for now
-        # gueses = take_guesses()
+        # LIkelihood ratio calculation
+        log_sum_l0 = torch.sum(torch.log(selection_l0), dim=-1)
+        log_sum_l1 = torch.sum(torch.log(selection_l1), dim=-1)
+
+        ratio_matrix = log_sum_l0 - log_sum_l1
+
+        # Argmax this boi
+        decisions = F.softmax(ratio_matrix)
+
+        # Cross entropy this boi
+        regrets = self.criterion(decisions, cur_hyp.to(torch.float))
+
+        # CHECK: This regret feels very "discrete".I fear it might get in the way of optimization
+
+        return torch.Tensor(regrets)  # Remove last zero
 
     def _generate_decimated_observation(
         self,

@@ -5,10 +5,10 @@
       "type": "python",
       "request": "launch",
       "cwd": "${workspaceFolder}",
-      "python": "/home/ottersome/miniconda3/envs/research/bin/python",
+      "python": "/Users/rac716/miniforge3/envs/rs39/bin/python",
       "stopOnEntry": false,
       "debugOptions": [],
-      "program": "/home/ottersome/Research/SamplingReconstruction/d1_init.py"
+      "program": "/Users/rac716/Research/SamplingReconstruction/d1_init.py"
     },
     {
       "name": "exp3.6",

@@ -13,6 +13,8 @@ def setup_logger(name: str, level=logging.INFO):
 
     sh = logging.StreamHandler()
     fh = logging.FileHandler("./logs/" + name + ".log")
+    sh.setLevel(level)
+    fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     sh.setFormatter(formatter)
 

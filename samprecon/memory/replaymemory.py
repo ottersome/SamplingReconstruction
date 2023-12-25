@@ -4,16 +4,19 @@ Just a class that will be useful for RL replay memory
 
 import random
 from collections import deque, namedtuple
+from logging import INFO
 from math import ceil
 from typing import List
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from samprecon.environments.OneEpisodeEnvironments import (
     Environment,
     MarkovianDualCumulativeEnvironment,
 )
+from samprecon.utils.utils import setup_logger
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "regret"))
 
@@ -33,8 +36,10 @@ class ReplayBuffer:
         sampling_controls,
         decimation_ranges,
         buffer_size=None,
-        batch_size=4,
+        bundle_size=4,
+        return_gamma: float = 0.9,
     ):
+        self.return_gamma = return_gamma
         self.decimation_ranges = decimation_ranges
         self.sampling_controls = sampling_controls
         self.sampbudget = sampbudget
@@ -43,9 +48,14 @@ class ReplayBuffer:
         self.environment = environment
         self.state_shape = environment.state_shape
 
+        # TODO: add to arguments
+        self.init_samples_to_take = 3
+
         # Mostly for memory control
-        self.batch_size = batch_size
+        self.bundle_size = bundle_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.logger = setup_logger("ReplayBuffer")
 
         # Calculate Furthest Sample
 
@@ -86,66 +96,78 @@ class ReplayBuffer:
         policy: torch.nn.Module,
         num_samples: int,
     ):
+        self.logger.info(
+            f"Populating Replay Buffer with {num_samples} with budnle size {self.bundle_size}"
+        )
         # Number of batches
-        num_batches = ceil(num_samples / self.batch_size)
-
-        # Generated and to be saved for posterity
-        gen_regrets = torch.zeros((num_samples, self.path_length))
-        for batch_num in range(num_batches):
+        num_bundles = ceil(num_samples / self.bundle_size)
+        for _ in range(num_bundles):
             # Generate the initial_states
-            batch_offset = batch_num * self.batch_size
-            dis_batch_size = (
-                self.batch_size
-                if batch_num != num_batches - 1
-                else num_samples % self.batch_size
+            cur_states, cur_periods, true_hyps = self.environment.reset()  # type:ignore
+            observed_states, actions, regrets = self._batch_loop(
+                policy, cur_states, cur_periods, true_hyps
             )
-            cur_state, cur_periods, hyp_selct = self.environment.reset()
+            regrets = self._batch_returns(regrets)
 
-            # Repeat hyp_selct across dimension 2
-            # rdr_rpt = rdr.repeat_interleave(
-            #     self.sampbudget,
-            #     dim=1,
-            # ).unsqueeze(-1)
-            # cur_state_oh = F.one_hot(cur_state, num_classes=self.environment.num_states)  # type: ignore
-
-            useful_state = torch.cat((hyp_selct, cur_periods, cur_state), dim=-1).to(
-                torch.float
-            )
-            # Start the loop
-            for step in range(self.path_length):
-                # Decide on sampling rate
-                action_probs = policy(useful_state[:, 1:])
-                dist = torch.distributions.Categorical(action_probs)
-                sampled_action = (dist.sample()).to(self.device)
-                new_periods = torch.Tensor(
-                    [self.sampling_controls[a] for a in sampled_action.squeeze()]
-                ).to(torch.long)
-                # cur_periods += (
-                #     (
-                #         torch.Tensor(
-                #             [
-                #                 self.sampling_controls[a]
-                #                 for a in sampled_action.squeeze()
-                #             ]
-                #         )
-                #         .to(torch.long)
-                #         .to(self.device)
-                #     )
-                #     .clamp(min=1, max=self.decimation_ranges[-1])
-                #     .view(self.batch_size, -1)
-                # )
-                # useful_state = torch.cat(
-                #     (hyp_selct, cur_periods, cur_state), dim=-1
-                # ).to(torch.float)
-
-                # Obseve new state
-                regrets, new_states = self.environment.step(
-                    useful_state.to(torch.long), new_periods
+            # Now we only take the first `self.init_samples_to_take`
+            for i in range(self.init_samples_to_take):
+                self.memory.append(
+                    Transition(
+                        observed_states[i],
+                        actions[i],
+                        observed_states[i + 1],
+                        regrets[i],
+                    )
                 )
-                useful_state = torch.cat((hyp_selct.unsqueeze(-1), new_states), dim=-1)
-                cur_periods = new_periods
 
-                # gen_regrets[batch_offset : batch_offset + dis_batch_size, :] = regrets
+        self.logger.info("Replay Buffer populated")
+
+    def _batch_returns(self, regrets: torch.Tensor):
+        returns = torch.zeros_like(regrets)
+        returns[:, -1] = regrets[:, -1]
+        for i in reversed(range(regrets.shape[0] - 1)):
+            returns[:, i] = regrets[:, i] + self.return_gamma * returns[:, i + 1]
+
+        return returns
+
+    def _batch_loop(
+        self,
+        policy: nn.Module,
+        cur_decimation: torch.Tensor,
+        cur_periods: torch.Tensor,
+        true_hyps: torch.Tensor,
+    ):
+        meta_state = torch.cat((true_hyps, cur_periods, cur_decimation), dim=-1)
+        generated_regrets = torch.zeros((self.bundle_size, self.path_length))
+        actions = torch.zeros((self.bundle_size, self.path_length))
+        observed_states = torch.zeros(
+            (self.bundle_size, self.path_length, 1 + self.sampbudget)
+        )
+
+        # Start the loop
+        for step in range(self.path_length):
+            # Decide on sampling rate
+            action_probs = policy(meta_state[:, 1:].to(torch.float))
+            dist = torch.distributions.Categorical(action_probs)
+            sampled_action = (dist.sample()).to(self.device)
+            period_delta = torch.Tensor(
+                [self.sampling_controls[a] for a in sampled_action.squeeze()]
+            ).to(torch.long)
+
+            observed_states[:, step] = meta_state[:, 1:]
+            actions[:, step] = period_delta
+
+            # Obseve new state
+            returns, new_states = self.environment.step(
+                meta_state.to(torch.long), period_delta
+            )
+
+            # Post-sim upadte
+            meta_state = torch.cat((true_hyps, new_states), dim=-1)
+            cur_periods = new_states[:, 0]
+            generated_regrets[:, step] = returns
+
+        return observed_states, actions, generated_regrets
 
     def _populate_replay_buffer(
         self,

@@ -24,11 +24,11 @@
 import numpy as np
 import torch
 
-from samprecon.environments.OneEpisodeEnvironments import (
-    MarkovianDualCumulativeEnvironment,
-)
+from samprecon.environments.OneEpisodeEnvironments import \
+    MarkovianDualCumulativeEnvironment
 from samprecon.memory.replaymemory import ReplayBuffer
 from samprecon.samplers.agents import SoftmaxAgent
+from samprecon.utils.utils import setup_logger
 
 # %% [markdown]
 # ## Setup all Constants
@@ -36,8 +36,9 @@ from samprecon.samplers.agents import SoftmaxAgent
 # %% [python]
 hyp0_baseline_rates = {"lam": 1 / 10, "mu": 4 / 10}
 hyp1_baseline_rates = {"lam": 4 / 10, "mu": 4 / 10}
+logger = setup_logger("Main")
 
-# Steering Wheel
+ Steering Wheel
 sampling_controls = [-8, -4, -2, -1, 0, 1, 2, 4, 8]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -86,7 +87,7 @@ replay_buffer = ReplayBuffer(
     decimation_ranges=decimation_ranges,
     sampling_controls=sampling_controls,
     buffer_size=128,
-    batch_size=batch_size,
+    bundle_size=batch_size,
 )
 
 # %% [markdown]
@@ -94,5 +95,17 @@ replay_buffer = ReplayBuffer(
 
 # %% [python]
 
-# Create some initial data using the initial policy
-replay_buffer.populate_replay_buffer(policy=sampling_agent, num_samples=32)
+# Constants
+epochs = 10
+
+# %% [python]
+
+for i in range(epochs):
+    # Create some initial data using the initial policy
+    replay_buffer.populate_replay_buffer(policy=sampling_agent, num_samples=32)
+
+    # Sample from our history
+    samples = replay_buffer.sample(batch_size=batch_size)
+
+    
+
