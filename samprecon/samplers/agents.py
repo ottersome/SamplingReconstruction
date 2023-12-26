@@ -8,19 +8,18 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from samprecon.estimators.value_estimators import ValueEstimator
+
 
 class Agent(ABC):
     @abstractmethod
-    def act(self, observation: torch.Tensor):
+    def act(self, observation: torch.Tensor) -> torch.Tensor:
         """
-        Decides on an action based on an observed state.
-
         Args:
             observation (array-like): current environment state
         Returns:
-            int: action(continuous or otherwise), specifically new decimation rate
+            torch.Tensor: batch of action(continuous or otherwise), specifically new decimation rate
         """
-        pass
 
 
 class SoftmaxAgent(Agent, nn.Module):
@@ -50,6 +49,29 @@ class SoftmaxAgent(Agent, nn.Module):
 
     def act(self, observation: torch.Tensor):
         return self.forward(observation)
+
+
+class EpsilonGreedyAgent(Agent):
+    def __init__(self, value_estimator: ValueEstimator, epsilon, batch_size):
+        self.value_estimator = value_estimator
+        self.epsilon = epsilon
+
+    def act(self, observation: torch.Tensor):
+        batch_size = observation.shape[0]
+        action_dim = self.value_estimator.get_action_dim()
+
+        # Make a random binary choice based on epsilon
+        choice = torch.rand(1) < self.epsilon
+        if choice == 1:
+            # Select a random action
+            actions = torch.randint(action_dim, (batch_size,)).view(batch_size, -1)
+        else:
+            # Select maximal action
+            action_values = self.value_estimator.estimate(observation)
+            actions = (
+                torch.argmax(action_values, dim=-1).view(batch_size, -1).to(torch.long)
+            )
+        return actions
 
 
 class SimpleAgent(Agent, nn.Module):

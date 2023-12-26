@@ -8,7 +8,7 @@
       "python": "/Users/rac716/miniforge3/envs/rs39/bin/python",
       "stopOnEntry": false,
       "debugOptions": [],
-      "program": "/Users/rac716/Research/SamplingReconstruction/d1_init.py"
+      "program": "/Users/rac716/Research/SamplingReconstruction/dql.py"
     },
     {
       "name": "exp3.6",

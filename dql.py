@@ -21,6 +21,8 @@
 # %% [python]
 # Get all imports
 
+from math import ceil
+
 import numpy as np
 import torch
 import torch.optim as optim
@@ -30,7 +32,7 @@ from samprecon.environments.OneEpisodeEnvironments import (
 )
 from samprecon.estimators.value_estimators import ValueFunc
 from samprecon.memory.replaymemory import ReplayBuffer
-from samprecon.samplers.agents import SoftmaxAgent
+from samprecon.samplers.agents import EpsilonGreedyAgent
 from samprecon.utils.utils import setup_logger
 
 # %% [markdown]
@@ -43,6 +45,8 @@ logger = setup_logger("Main")
 
 # Steering Wheel
 sampling_controls = [-8, -4, -2, -1, 0, 1, 2, 4, 8]
+actions_to_idx = {v: i for i, v in enumerate(sampling_controls)}
+action_space_size = len(sampling_controls)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 LR_ACTOR = 1e-4
@@ -61,6 +65,7 @@ decimation_ranges = [1, int(avg_timespan // highest_frequency * 4)]
 episode_length = 12
 init_policy_sampling = 32
 batch_size = 4
+target_net_update_epochs = 2
 
 # %% [markdown]
 # ## Setup Models
@@ -68,16 +73,21 @@ batch_size = 4
 # %% [python]
 
 # Setup the parameters and optimizers
-sampling_agent = SoftmaxAgent(sampling_budget + 1, len(sampling_controls)).to(device)
-critic_new = ValueFunc(sampling_budget + 1)
-critic_lag = ValueFunc(sampling_budget + 1)
+# sampling_agent = SoftmaxAgent(sampling_budget + 1, len(sampling_controls)).to(device)
+policy_net = ValueFunc(sampling_budget + 1, action_space_size)
+target_net = ValueFunc(sampling_budget + 1, action_space_size)
+target_net.eval()  # CHECK: if you have to load critic_new weights
 
-actor_optimizer = optim.Adam(sampling_agent.parameters(), lr=LR_ACTOR)
-critic_optimizer = optim.Adam(critic.parameters(), lr=LR_CRITIC)
+# actor_optimizer = optim.Adam(sampling_agent.parameters(), lr=LR_ACTOR)
+critic_optimizer = optim.Adam(policy_net.parameters(), lr=LR_CRITIC)
 
 
 # %% [markdown]
 # ## Setup Environments
+epsilon = 0.3
+sampling_agent = EpsilonGreedyAgent(
+    policy_net, epsilon, batch_size=batch_size
+)  # CHECK: shoudl I use greedy new?
 
 # Setup The Environment
 dual_env = MarkovianDualCumulativeEnvironment(
@@ -112,6 +122,7 @@ replay_buffer = ReplayBuffer(
 
 # Constants
 epochs = 10
+epsilon = 0.4
 
 # %% [python]
 
@@ -123,3 +134,39 @@ for i in range(epochs):
     samples = replay_buffer.sample(batch_size=batch_size)
 
     # Learn from said samples
+    buffer_len = len(replay_buffer)
+    num_batches = ceil(buffer_len / batch_size)
+
+    for bn in range(num_batches):
+        # Sample Uniformly
+        # TODO: create an exhaustive way of sampling from the buffer.
+        states, actions, returns, next_states = replay_buffer.sample(
+            batch_size=batch_size
+        )
+        actions_become_idx = torch.tensor(
+            [actions_to_idx[a.item()] for a in actions], dtype=torch.long
+        )
+
+        policy_estimations = policy_net(states)
+
+        policy_estimations_gathered = policy_estimations.gather(
+            1, actions_become_idx.to(torch.long).view(-1, 1)
+        )
+
+        target_estimations = returns + target_net(next_states).max(1)[0].detach()
+
+        # Loss
+        loss = torch.nn.functional.mse_loss(
+            policy_estimations_gathered, target_estimations
+        )
+        logger.info(f"Loss: {loss}")
+
+        # Optimize the model
+        critic_optimizer.zero_grad()
+        loss.backward()
+        critic_optimizer.step()
+
+    # See if you can update the target network
+    if i % target_net_update_epochs == 0:
+        target_net.load_state_dict(policy_net.state_dict())
+        target_net.eval()  # To be safe

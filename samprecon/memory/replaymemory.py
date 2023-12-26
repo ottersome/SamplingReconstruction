@@ -16,9 +16,10 @@ from samprecon.environments.OneEpisodeEnvironments import (
     Environment,
     MarkovianDualCumulativeEnvironment,
 )
+from samprecon.samplers.agents import Agent
 from samprecon.utils.utils import setup_logger
 
-Transition = namedtuple("Transition", ("state", "action", "next_state", "regret"))
+Transition = namedtuple("Transition", ("state", "action", "next_state", "returns"))
 
 
 class ReplayBuffer:
@@ -59,41 +60,26 @@ class ReplayBuffer:
 
         # Calculate Furthest Sample
 
-        # self.experience = namedtuple("Experience", field_names=["state", "samp_rate", "errors" ])
-        # self.experience = namedtuple("Experience", field_names=["state", "samp_rate", "errors" ])
-
     def add(self, state, samp_rate, errors):
         # e = self.experience(state, samp_rate, errors)
         self.memory.append((state, samp_rate, errors))
 
     def sample(self, batch_size):
-        experiences = random.sample(self.memory, k=batch_size)
-        states = torch.empty(
-            (batch_size, 2**2)
-        )  # TODO Remove hard code to the number of entries in generator matrix
+        experiences = Transition(*zip(*random.sample(self.memory, k=batch_size)))
 
-        # The states will be encoded as tensors
-        # states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float()
-        # actions = torch.from_numpy(np.vstack([e.samp_rate for e in experiences if e is not None])).float()
-        # errors = torch.from_numpy(np.vstack([e.errors for e in experiences if e is not None])).float()
-        states = torch.from_numpy(
-            np.vstack([e[0] for e in experiences if e is not None])
-        ).float()
-        actions = torch.from_numpy(
-            np.vstack([e[1] for e in experiences if e is not None])
-        ).float()
-        errors = torch.from_numpy(
-            np.vstack([e[2] for e in experiences if e is not None])
-        ).float()
+        states = torch.cat(experiences.state)
+        actions = torch.cat(experiences.action)
+        returns = torch.cat(experiences.returns)
+        next_state = torch.cat(experiences.next_state)
 
-        return states, actions, errors
+        return states, actions, returns, next_state
 
     def __len__(self):
         return len(self.memory)
 
     def populate_replay_buffer(
         self,
-        policy: torch.nn.Module,
+        policy: Agent,
         num_samples: int,
     ):
         self.logger.info(
@@ -132,7 +118,7 @@ class ReplayBuffer:
 
     def _batch_loop(
         self,
-        policy: nn.Module,
+        policy: Agent,
         cur_decimation: torch.Tensor,
         cur_periods: torch.Tensor,
         true_hyps: torch.Tensor,
@@ -147,9 +133,10 @@ class ReplayBuffer:
         # Start the loop
         for step in range(self.path_length):
             # Decide on sampling rate
-            action_probs = policy(meta_state[:, 1:].to(torch.float))
-            dist = torch.distributions.Categorical(action_probs)
-            sampled_action = (dist.sample()).to(self.device)
+            # action_probs = policy.act(meta_state[:, 1:].to(torch.float))
+            # dist = torch.distributions.Categorical(action_probs)
+            # sampled_action = (dist.sample()).to(self.device)
+            sampled_action = policy.act(meta_state[:, 1:].to(torch.float))
             period_delta = torch.Tensor(
                 [self.sampling_controls[a] for a in sampled_action.squeeze()]
             ).to(torch.long)
@@ -171,7 +158,7 @@ class ReplayBuffer:
 
     def _populate_replay_buffer(
         self,
-        policy: torch.nn.Module,
+        policy: Agent,
         num_of_paths: int,
         # guesses_per_rate=1000, # This is to be phased out
     ):
@@ -193,7 +180,7 @@ class ReplayBuffer:
             for step_no in range(self.path_length):
                 # Take an action after observing the environment
                 cur_states = torch.cat((cur_paths, cur_dec_rates), dim=-1)
-                cur_actions = policy(cur_states)
+                cur_actions = policy.act(cur_states)
 
                 cur_states, dec_rates = self.environment()
 
