@@ -23,9 +23,12 @@
 
 import numpy as np
 import torch
+import torch.optim as optim
 
-from samprecon.environments.OneEpisodeEnvironments import \
-    MarkovianDualCumulativeEnvironment
+from samprecon.environments.OneEpisodeEnvironments import (
+    MarkovianDualCumulativeEnvironment,
+)
+from samprecon.estimators.value_estimators import ValueFunc
 from samprecon.memory.replaymemory import ReplayBuffer
 from samprecon.samplers.agents import SoftmaxAgent
 from samprecon.utils.utils import setup_logger
@@ -38,9 +41,12 @@ hyp0_baseline_rates = {"lam": 1 / 10, "mu": 4 / 10}
 hyp1_baseline_rates = {"lam": 4 / 10, "mu": 4 / 10}
 logger = setup_logger("Main")
 
- Steering Wheel
+# Steering Wheel
 sampling_controls = [-8, -4, -2, -1, 0, 1, 2, 4, 8]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+LR_ACTOR = 1e-4
+LR_CRITIC = 1e-4
 
 sampling_budget = 10
 highest_frequency = 1e-0
@@ -57,12 +63,21 @@ init_policy_sampling = 32
 batch_size = 4
 
 # %% [markdown]
-# ## Setup Environments
+# ## Setup Models
 
 # %% [python]
 
-# Setup the Agent
+# Setup the parameters and optimizers
 sampling_agent = SoftmaxAgent(sampling_budget + 1, len(sampling_controls)).to(device)
+critic_new = ValueFunc(sampling_budget + 1)
+critic_lag = ValueFunc(sampling_budget + 1)
+
+actor_optimizer = optim.Adam(sampling_agent.parameters(), lr=LR_ACTOR)
+critic_optimizer = optim.Adam(critic.parameters(), lr=LR_CRITIC)
+
+
+# %% [markdown]
+# ## Setup Environments
 
 # Setup The Environment
 dual_env = MarkovianDualCumulativeEnvironment(
@@ -107,5 +122,4 @@ for i in range(epochs):
     # Sample from our history
     samples = replay_buffer.sample(batch_size=batch_size)
 
-    
-
+    # Learn from said samples
