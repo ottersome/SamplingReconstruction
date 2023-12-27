@@ -21,6 +21,7 @@
 # %% [python]
 # Get all imports
 
+import copy
 from math import ceil
 
 import numpy as np
@@ -68,10 +69,9 @@ avg_timespan = torch.mean(
     )
 )
 decimation_ranges = [1, int(avg_timespan // highest_frequency * 4)]
-episode_length = 12
-init_policy_sampling = 32
-batch_size = 32
-target_net_update_epochs = 5
+episode_length = 6
+batch_size = 52
+target_net_update_epochs = 10
 
 
 epochs = 100
@@ -82,6 +82,7 @@ return_gamma = 0.99
 
 epsilon_decay = epochs // 2
 evaluation_frequency = epochs // 10
+
 
 # %% [markdown]
 # ## Setup Models
@@ -137,11 +138,32 @@ replay_buffer = ReplayBuffer(
 
 # %% [python]
 
+# # Test best sampling rate
+# cur_states, cur_periods, true_hyps = self.environment.reset()  # type:ignore
+# # Just take the first one
+# state = cur_states[0]
+# period = cur_periods[0]
+# hyp = true_hyps[0]
+# tries = 100
+# for r in range(decimation_ranges[0], decimation_ranges[1]):
+#     # Let multiple of the same
+#     regrets = []
+#     for t in range(tries):
+#         meta_state = torch.cat((true_hyps, cur_periods, cur_decimation), dim=-1)
+#
+#         returns, new_states = dual_env.step(meta_state.to(torch.long), r)
+#
+#     avg_regrets = torch.mean(torch.Tensor(regrets)).item()
+#
+
+# %% [python]
+
 # Constants
 
 cur_epsilon = lambda frame: epsilon_end + (epsilon_start - epsilon_end) * np.exp(
     -1.0 * frame / epsilon_decay
 )
+cur_weights = [copy.deepcopy(v) for v in policy_net.state_dict().values()]
 
 
 def evaluate_performance(replay_buffer: ReplayBuffer):
@@ -198,7 +220,10 @@ for i in range(epochs):
         )
 
         # Loss
-        loss = torch.nn.functional.mse_loss(
+        # loss = torch.nn.functional.mse_loss(
+        #     policy_estimations_gathered, target_estimations
+        # )
+        loss = torch.nn.functional.smooth_l1_loss(
             policy_estimations_gathered, target_estimations
         )
         batch_qestimation_loss.append(loss.item())
@@ -209,6 +234,14 @@ for i in range(epochs):
         critic_optimizer.step()
         b_bar.set_description(f"Loss: {loss.item():.3f}")
         b_bar.update(1)
+
+        # 🐛
+        weight_difference = [
+            torch.abs(cur_weights[i] - v).sum()
+            for i, v in enumerate(policy_net.state_dict().values())
+        ]
+        total_sum = torch.sum(torch.Tensor(weight_difference))
+        logger.debug(f" Difference of weights: {total_sum}")
 
     q_estimation_losses.append(torch.mean(torch.Tensor(batch_qestimation_loss)).item())
 

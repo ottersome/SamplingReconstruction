@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from scipy.linalg import expm
 
 from samprecon.reconstructors.reconstruct_intf import Reconstructor
 from samprecon.samplers.spatial_transformers import (
@@ -17,6 +18,7 @@ from samprecon.samplers.spatial_transformers import (
 from samprecon.utils.utils import setup_logger
 from sp_sims.detectors.pearsonneyman import take_guesses
 from sp_sims.simulators.stochasticprocesses import BDStates
+from sp_sims.utils.utils import get_q_mat
 
 # TOREM : I dont think this is beign used at all
 # class Model(nn.Module):
@@ -62,6 +64,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
     ):
         self.hyp0_rates = hyp0_rates
         self.hyp1_rates = hyp1_rates
+        self.rates = [hyp0_rates, hyp1_rates]
         self.high_res_frequency = high_res_frequency
         self.episode_length = episode_length
         self.num_states = num_states
@@ -141,8 +144,23 @@ class MarkovianDualCumulativeEnvironment(Environment):
             torch.long
         )
 
+        # OPTIM: Make this faster
+        # Calculate new probabilities according to how fast it is going:
+        probabilities_per_samples = []
+        for i, p in enumerate(new_periods):
+            q0 = get_q_mat(self.rates[0], self.num_states)
+            q1 = get_q_mat(self.rates[1], self.num_states)
+            p0 = expm(
+                q0
+                * p.item()  # TODO: since highres is 1 right now then this works, but we need to multiply p by highres rate
+            )  # CHECK: There might not exist a unique exponential, or a solution at all
+            p1 = expm(q1 * p.item())
+            probabilities_per_samples.append([p0, p1])
+
         # Calculate Regret
-        regret = self._calculate_regret(new_dec_path, cur_hyp)
+        regret = self._calculate_regret(
+            new_dec_path, cur_hyp, torch.Tensor(probabilities_per_samples)
+        )
 
         self.cur_step += 1
 
@@ -156,19 +174,28 @@ class MarkovianDualCumulativeEnvironment(Environment):
         self.total_path = None
         self.cur_step = None
 
-    def _calculate_regret(self, new_state, cur_hyp):
+    def _calculate_regret(self, new_state, cur_hyp, probabilities):
         # First get the corresponding probabilities
         # probabilities = [hg.P for hg in self.hypgens]
         # In comes (batch_size) x () x (sampling_budget)
 
         # TODO: not like above, get probabilities under decimation rate.
         # New State containas the
-        joint_probs = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
+        # joint_probs = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
+
         prev_steps = new_state[:, :-1]
         next_steps = new_state[:, 1:]
 
-        selection_l0 = joint_probs[0, prev_steps, next_steps]
-        selection_l1 = joint_probs[1, prev_steps, next_steps]
+        # OPTIM: make this nicer
+        ones = torch.ones_like(prev_steps)
+        zeros = torch.zeros_like(prev_steps)
+        indexer = (
+            torch.arange(probabilities.shape[0])
+            .view(-1, 1)
+            .repeat_interleave(next_steps.shape[1], dim=1)
+        )
+        selection_l0 = probabilities[indexer, zeros, prev_steps, next_steps]
+        selection_l1 = probabilities[indexer, ones, prev_steps, next_steps]
 
         # LIkelihood ratio calculation
         log_sum_l0 = torch.sum(torch.log(selection_l0), dim=-1)
@@ -177,7 +204,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         ratio_matrix = log_sum_l0 - log_sum_l1
 
         # Argmax this boi
-        decisions = F.softmax(ratio_matrix)
+        decisions = 1 - F.softmax(ratio_matrix)
 
         # Cross entropy this boi
         regrets = self.criterion(decisions, cur_hyp.to(torch.float))
