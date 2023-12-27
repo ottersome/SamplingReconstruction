@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from samprecon.estimators.value_estimators import ValueEstimator
+from samprecon.utils.utils import setup_logger
 
 
 class Agent(ABC):
@@ -20,6 +21,17 @@ class Agent(ABC):
         Returns:
             torch.Tensor: batch of action(continuous or otherwise), specifically new decimation rate
         """
+
+    @abstractmethod
+    def change_property(self):
+        pass
+
+    @abstractmethod
+    def evaluate(self, observation: torch.Tensor):
+        """
+        For those policies whose inference and training work a bit differently
+        """
+        pass
 
 
 class SoftmaxAgent(Agent, nn.Module):
@@ -45,7 +57,6 @@ class SoftmaxAgent(Agent, nn.Module):
     def forward(self, state):
         # We want regressiont to be capt between 1 -> action_size:
         y = self.model(state)
-        return F.softmax(y, dim=-1)
 
     def act(self, observation: torch.Tensor):
         return self.forward(observation)
@@ -55,23 +66,36 @@ class EpsilonGreedyAgent(Agent):
     def __init__(self, value_estimator: ValueEstimator, epsilon, batch_size):
         self.value_estimator = value_estimator
         self.epsilon = epsilon
+        self.logger = setup_logger("EpsilonGreedyAgent")
 
     def act(self, observation: torch.Tensor):
         batch_size = observation.shape[0]
         action_dim = self.value_estimator.get_action_dim()
+        actions = torch.zeros((batch_size), dtype=torch.long)
 
-        # Make a random binary choice based on epsilon
-        choice = torch.rand(1) < self.epsilon
-        if choice == 1:
-            # Select a random action
-            actions = torch.randint(action_dim, (batch_size,)).view(batch_size, -1)
-        else:
-            # Select maximal action
-            action_values = self.value_estimator.estimate(observation)
-            actions = (
-                torch.argmax(action_values, dim=-1).view(batch_size, -1).to(torch.long)
-            )
-        return actions
+        rand_mask = torch.rand(batch_size) < self.epsilon
+        actions[rand_mask] = torch.randint(action_dim, (torch.sum(rand_mask).tolist(),))
+        actions[~rand_mask] = torch.argmax(
+            self.value_estimator.estimate(observation[~rand_mask]), dim=-1
+        )
+
+        return actions.view(batch_size, -1), rand_mask
+
+    def evaluate(self, observation: torch.Tensor):
+        batch_size = observation.shape[0]
+
+        actions = torch.argmax(self.value_estimator.estimate(observation), dim=-1)
+
+        return (
+            actions.view(batch_size, -1),
+            None,
+        )  # The none is there for when we use eval and act in the same place
+
+    def change_property(self, **kwargs):
+        # Change self property as per kwargs
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+            self.logger.debug(f"Setting up {k} to {v}")
 
 
 class SimpleAgent(Agent, nn.Module):

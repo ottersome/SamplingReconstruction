@@ -33,7 +33,7 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def step(self, cur_state, action) -> Tuple[float, torch.Tensor]:
+    def step(self, cur_state, action) -> Tuple[torch.Tensor, torch.LongTensor]:
         pass
 
     @abstractmethod
@@ -166,9 +166,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         joint_probs = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
         prev_steps = new_state[:, :-1]
         next_steps = new_state[:, 1:]
-        format_hyp = cur_hyp.unsqueeze(-1).repeat_interleave(
-            new_state.shape[1] - 1, dim=1
-        )
+
         selection_l0 = joint_probs[0, prev_steps, next_steps]
         selection_l1 = joint_probs[1, prev_steps, next_steps]
 

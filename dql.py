@@ -26,6 +26,7 @@ from math import ceil
 import numpy as np
 import torch
 import torch.optim as optim
+from tqdm import tqdm
 
 from samprecon.environments.OneEpisodeEnvironments import (
     MarkovianDualCumulativeEnvironment,
@@ -43,14 +44,19 @@ hyp0_baseline_rates = {"lam": 1 / 10, "mu": 4 / 10}
 hyp1_baseline_rates = {"lam": 4 / 10, "mu": 4 / 10}
 logger = setup_logger("Main")
 
+# Set random seeds
+np.random.seed(0)
+torch.manual_seed(0)
+
+
 # Steering Wheel
 sampling_controls = [-8, -4, -2, -1, 0, 1, 2, 4, 8]
 actions_to_idx = {v: i for i, v in enumerate(sampling_controls)}
 action_space_size = len(sampling_controls)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-LR_ACTOR = 1e-4
-LR_CRITIC = 1e-4
+LR_ACTOR = 1e-3
+LR_CRITIC = 1e-3
 
 sampling_budget = 10
 highest_frequency = 1e-0
@@ -64,8 +70,18 @@ avg_timespan = torch.mean(
 decimation_ranges = [1, int(avg_timespan // highest_frequency * 4)]
 episode_length = 12
 init_policy_sampling = 32
-batch_size = 4
-target_net_update_epochs = 2
+batch_size = 32
+target_net_update_epochs = 5
+
+
+epochs = 100
+epsilon_start = 1.0
+epsilon_end = 0.01
+
+return_gamma = 0.99
+
+epsilon_decay = epochs // 2
+evaluation_frequency = epochs // 10
 
 # %% [markdown]
 # ## Setup Models
@@ -86,7 +102,7 @@ critic_optimizer = optim.Adam(policy_net.parameters(), lr=LR_CRITIC)
 # ## Setup Environments
 epsilon = 0.3
 sampling_agent = EpsilonGreedyAgent(
-    policy_net, epsilon, batch_size=batch_size
+    policy_net, epsilon_start, batch_size=batch_size
 )  # CHECK: shoudl I use greedy new?
 
 # Setup The Environment
@@ -111,8 +127,9 @@ replay_buffer = ReplayBuffer(
     environment=dual_env,
     decimation_ranges=decimation_ranges,
     sampling_controls=sampling_controls,
-    buffer_size=128,
+    buffer_size=1024,
     bundle_size=batch_size,
+    return_gamma=return_gamma,
 )
 
 # %% [markdown]
@@ -121,14 +138,34 @@ replay_buffer = ReplayBuffer(
 # %% [python]
 
 # Constants
-epochs = 10
-epsilon = 0.4
+
+cur_epsilon = lambda frame: epsilon_end + (epsilon_start - epsilon_end) * np.exp(
+    -1.0 * frame / epsilon_decay
+)
+
+
+def evaluate_performance(replay_buffer: ReplayBuffer):
+    if len(replay_buffer) < 100:
+        logger.debug(f"Not adding evaluation. Currently at {len(replay_buffer)}/100")
+    eval_regrets = replay_buffer.evaluate_batch(sampling_agent)
+    return eval_regrets
+
 
 # %% [python]
 
+evaluations = []
+q_estimation_losses = []
+e_bar = tqdm(range(epochs), desc="Epochs", leave=True, position=0)
+
 for i in range(epochs):
     # Create some initial data using the initial policy
-    replay_buffer.populate_replay_buffer(policy=sampling_agent, num_samples=32)
+    e_bar.set_description("Populating replay buffer")
+    addition = len(replay_buffer) // 10 if i > 0 else batch_size
+    replay_buffer.populate_replay_buffer(
+        policy=sampling_agent,
+        num_samples=addition,
+    )
+    sampling_agent.change_property(epsilon=cur_epsilon(i))
 
     # Sample from our history
     samples = replay_buffer.sample(batch_size=batch_size)
@@ -137,6 +174,9 @@ for i in range(epochs):
     buffer_len = len(replay_buffer)
     num_batches = ceil(buffer_len / batch_size)
 
+    e_bar.set_description("Batch optimization")
+    b_bar = tqdm(range(num_batches), desc="Batches", leave=False, position=1)
+    batch_qestimation_loss = []
     for bn in range(num_batches):
         # Sample Uniformly
         # TODO: create an exhaustive way of sampling from the buffer.
@@ -153,20 +193,52 @@ for i in range(epochs):
             1, actions_become_idx.to(torch.long).view(-1, 1)
         )
 
-        target_estimations = returns + target_net(next_states).max(1)[0].detach()
+        target_estimations = (
+            returns + return_gamma * target_net(next_states).max(1)[0].detach()
+        )
 
         # Loss
         loss = torch.nn.functional.mse_loss(
             policy_estimations_gathered, target_estimations
         )
-        logger.info(f"Loss: {loss}")
+        batch_qestimation_loss.append(loss.item())
 
         # Optimize the model
         critic_optimizer.zero_grad()
         loss.backward()
         critic_optimizer.step()
+        b_bar.set_description(f"Loss: {loss.item():.3f}")
+        b_bar.update(1)
+
+    q_estimation_losses.append(torch.mean(torch.Tensor(batch_qestimation_loss)).item())
 
     # See if you can update the target network
     if i % target_net_update_epochs == 0:
         target_net.load_state_dict(policy_net.state_dict())
         target_net.eval()  # To be safe
+    if i % evaluation_frequency == 0:
+        evaluations.append(evaluate_performance(replay_buffer).item())
+    e_bar.update(1)
+
+# %% [markdown]
+
+# Evaluation
+
+# %% [python]
+
+import matplotlib.pyplot as plt
+
+# Plot the evaluation regret
+fig, axs = plt.subplots(2, 1, figsize=(14, 5))
+axs[0].plot(
+    np.arange(0, epochs, evaluation_frequency),
+    evaluations,
+)
+axs[0].set_title("Evaluation of Performance")
+
+axs[1].plot(range(epochs), q_estimation_losses, label="Loss Estimation")
+axs[1].set_title("Q-Estimation Losses")
+
+
+plt.tight_layout()
+plt.show()

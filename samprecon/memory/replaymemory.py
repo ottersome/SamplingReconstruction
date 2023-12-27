@@ -37,7 +37,7 @@ class ReplayBuffer:
         sampling_controls,
         decimation_ranges,
         buffer_size=None,
-        bundle_size=4,
+        bundle_size=32,
         return_gamma: float = 0.9,
     ):
         self.return_gamma = return_gamma
@@ -67,10 +67,15 @@ class ReplayBuffer:
     def sample(self, batch_size):
         experiences = Transition(*zip(*random.sample(self.memory, k=batch_size)))
 
-        states = torch.cat(experiences.state)
-        actions = torch.cat(experiences.action)
-        returns = torch.cat(experiences.returns)
-        next_state = torch.cat(experiences.next_state)
+        # states = torch.cat(experiences.state)
+        # actions = torch.cat(experiences.action)
+        # returns = torch.cat(experiences.returns)
+        # next_state = torch.cat(experiences.next_state)
+
+        states = torch.Tensor(experiences.state)
+        actions = torch.Tensor(experiences.action)
+        returns = torch.Tensor(experiences.returns)
+        next_state = torch.Tensor(experiences.next_state)
 
         return states, actions, returns, next_state
 
@@ -82,7 +87,7 @@ class ReplayBuffer:
         policy: Agent,
         num_samples: int,
     ):
-        self.logger.info(
+        self.logger.debug(
             f"Populating Replay Buffer with {num_samples} with budnle size {self.bundle_size}"
         )
         # Number of batches
@@ -95,23 +100,45 @@ class ReplayBuffer:
             )
             regrets = self._batch_returns(regrets)
 
+            self.logger.debug(
+                f"Adding new samples to replay memory with average regret {torch.mean(regrets)}"
+            )
+
             # Now we only take the first `self.init_samples_to_take`
-            for i in range(self.init_samples_to_take):
+            # for i in range(self.init_samples_to_take):
+            for i in range(cur_states.shape[0]):
                 self.memory.append(
                     Transition(
-                        observed_states[i],
-                        actions[i],
-                        observed_states[i + 1],
-                        regrets[i],
+                        observed_states[i, 0].tolist(),
+                        actions[i, 0].item(),
+                        observed_states[i, 1].tolist(),
+                        regrets[i, 0].item(),
                     )
                 )
 
-        self.logger.info("Replay Buffer populated")
+        self.logger.debug("Replay Buffer populated")
+
+    def evaluate(self, observations: torch.Tensor, policy: Agent):
+        for i in range(observations.shape[1]):
+            cur_paths, cur_dec_rates, hyps = self.environment.reset()
+            for step_no in range(self.path_length):
+                cur_states = torch.cat((cur_dec_rates, cur_paths))
+                cur_actions = policy.evaluate(cur_states)
+
+    def evaluate_batch(self, policy):
+        self.logger.debug(f"Evaluating poliy")
+        cur_states, cur_periods, true_hyps = self.environment.reset()
+        _, _, regrets = self._batch_loop(
+            policy, cur_states, cur_periods, true_hyps, eval=True
+        )
+        returns = self._batch_returns(regrets)
+        avg_regrets = torch.mean(returns[:, 0], dim=0)
+        return avg_regrets
 
     def _batch_returns(self, regrets: torch.Tensor):
         returns = torch.zeros_like(regrets)
         returns[:, -1] = regrets[:, -1]
-        for i in reversed(range(regrets.shape[0] - 1)):
+        for i in reversed(range(regrets.shape[1] - 1)):
             returns[:, i] = regrets[:, i] + self.return_gamma * returns[:, i + 1]
 
         return returns
@@ -122,6 +149,7 @@ class ReplayBuffer:
         cur_decimation: torch.Tensor,
         cur_periods: torch.Tensor,
         true_hyps: torch.Tensor,
+        eval=False,
     ):
         meta_state = torch.cat((true_hyps, cur_periods, cur_decimation), dim=-1)
         generated_regrets = torch.zeros((self.bundle_size, self.path_length))
@@ -133,10 +161,11 @@ class ReplayBuffer:
         # Start the loop
         for step in range(self.path_length):
             # Decide on sampling rate
-            # action_probs = policy.act(meta_state[:, 1:].to(torch.float))
-            # dist = torch.distributions.Categorical(action_probs)
-            # sampled_action = (dist.sample()).to(self.device)
-            sampled_action = policy.act(meta_state[:, 1:].to(torch.float))
+            sampled_action, mask = (
+                policy.act(meta_state[:, 1:].to(torch.float))
+                if eval == False
+                else policy.evaluate(meta_state[:, 1:].to(torch.float))
+            )  # type: ignore
             period_delta = torch.Tensor(
                 [self.sampling_controls[a] for a in sampled_action.squeeze()]
             ).to(torch.long)
@@ -156,47 +185,49 @@ class ReplayBuffer:
 
         return observed_states, actions, generated_regrets
 
-    def _populate_replay_buffer(
-        self,
-        policy: Agent,
-        num_of_paths: int,
-        # guesses_per_rate=1000, # This is to be phased out
-    ):
-        # TODO: we might want to look ta  this actor-crtioc
-        """
-        We would ideally like to run this every time we get a significant change in our policy.
-        Otherwise the samples added will be similar.
-        """
-        # Get Errors  # ACTIONS
-        chose_hypothesis = torch.randint(2, (num_of_paths, 1))
-        regrets = [0] * len(self.sampbudget)  # Amount of errors per action
-
-        # TODO: PArallelize this through threads
-        for i in range(num_of_paths):  # For Every State-Action
-            # Generate Initial States
-            cur_paths, cur_dec_rates, hyps = self.environment.reset()
-
-            # Travel the Path with Current Policy.
-            for step_no in range(self.path_length):
-                # Take an action after observing the environment
-                cur_states = torch.cat((cur_paths, cur_dec_rates), dim=-1)
-                cur_actions = policy.act(cur_states)
-
-                cur_states, dec_rates = self.environment()
-
-            # Do Guesses
-            for j in range(guesses_per_rate):  # Sample a bunch of paths
-                # Get the corresponding Losses
-                # TODO: Maybe scale down the errors /kj
-                regrets[i] += (
-                    multiplicity_guess(tmpSampTape, replicas, p0, p1) != true_hyps[j]
-                )
-
-        regrets = np.array(regrets) / guesses_per_rate
-        # errors = np.array(errors)
-
-        for i in range(num_of_paths):
-            self.add(list(rates0[i]) + list(rates1[i]), smp_rates[i], regrets[i])
+    # def _populate_replay_buffer(
+    #     self,
+    #     policy: Agent,
+    #     num_of_paths: int,
+    #     # guesses_per_rate=1000, # This is to be phased out
+    # ):
+    #     # TODO: we might want to look ta  this actor-crtioc
+    #     """
+    #     We would ideally like to run this every time we get a significant change in our policy.
+    #     Otherwise the samples added will be similar.
+    #     """
+    #     # Get Errors  # ACTIONS
+    #     chose_hypothesis = torch.randint(2, (num_of_paths, 1))
+    #     regrets = [0] * len(self.sampbudget)  # Amount of errors per action
+    #
+    #     # TODO: PArallelize this through threads
+    #     for i in range(num_of_paths):  # For Every State-Action
+    #         # Generate Initial States
+    #         cur_paths, cur_dec_rates, hyps = self.environment.reset()
+    #
+    #         # Travel the Path with Current Policy.
+    #         for step_no in range(self.path_length):
+    #             # Take an action after observing the environment
+    #             cur_states = torch.cat(
+    #                 (cur_paths, cur_dec_rates), dim=-1
+    #             )  # CHECK: this seems wrong cur_dec_rates should go at beggining
+    #             cur_actions = policy.act(cur_states)
+    #
+    #             cur_states, dec_rates = self.environment()
+    #
+    #         # Do Guesses
+    #         for j in range(guesses_per_rate):  # Sample a bunch of paths
+    #             # Get the corresponding Losses
+    #             # TODO: Maybe scale down the errors /kj
+    #             regrets[i] += (
+    #                 multiplicity_guess(tmpSampTape, replicas, p0, p1) != true_hyps[j]
+    #             )
+    #
+    #     regrets = np.array(regrets) / guesses_per_rate
+    #     # errors = np.array(errors)
+    #
+    #     for i in range(num_of_paths):
+    #         self.add(list(rates0[i]) + list(rates1[i]), smp_rates[i], regrets[i])
 
     def add_actions_to_buffer(self, states, actions, guesses_per_rate=1000):
         errors = [0] * len(actions)  # Amount of errors per action
