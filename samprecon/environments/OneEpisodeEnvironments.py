@@ -39,7 +39,7 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def reset(self):
+    def reset(self, batch_size):
         pass
 
     # Define abstract property
@@ -59,7 +59,6 @@ class MarkovianDualCumulativeEnvironment(Environment):
         num_states: int,
         decimation_ranges: List[int],
         selection_probabilities: List[float],
-        batch_size: int,
         episode_length: int,
     ):
         self.hyp0_rates = hyp0_rates
@@ -69,7 +68,6 @@ class MarkovianDualCumulativeEnvironment(Environment):
         self.episode_length = episode_length
         self.num_states = num_states
         self.sampling_budget = sampling_budget
-        self.batch_size = batch_size
         self.selection_probabilities = torch.Tensor(selection_probabilities)
         self.decimation_ranges = decimation_ranges
         self.hypgens = [
@@ -83,8 +81,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
 
         # Blacnk slate
         self.cur_step = None
+        self.batch_size = None  # Determined on reset
 
-    def reset(self):
+    def reset(self, batch_size):
         """
         returns
         -------
@@ -96,6 +95,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
             self.cur_step == None
         ), "Make sure you reset environment after it finishes"
 
+        self.batch_size = batch_size
         # TODO: for now we are using initial state of 0
         hypothesis_selection = torch.multinomial(
             self.selection_probabilities, self.batch_size, replacement=True
@@ -173,6 +173,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         # self.hypothesis_selection = None
         self.total_path = None
         self.cur_step = None
+        self.batch_size = None
 
     def _calculate_regret(self, new_state, cur_hyp, probabilities):
         # First get the corresponding probabilities

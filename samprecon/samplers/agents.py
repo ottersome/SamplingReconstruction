@@ -63,7 +63,7 @@ class SoftmaxAgent(Agent, nn.Module):
 
 
 class EpsilonGreedyAgent(Agent):
-    def __init__(self, value_estimator: ValueEstimator, epsilon, batch_size):
+    def __init__(self, value_estimator: ValueEstimator, epsilon):
         self.value_estimator = value_estimator
         self.epsilon = epsilon
         self.logger = setup_logger("EpsilonGreedyAgent")

@@ -64,8 +64,8 @@ class ReplayBuffer:
         # e = self.experience(state, samp_rate, errors)
         self.memory.append((state, samp_rate, errors))
 
-    def sample(self, batch_size):
-        experiences = Transition(*zip(*random.sample(self.memory, k=batch_size)))
+    def sample(self, amount):
+        experiences = Transition(*zip(*random.sample(self.memory, k=amount)))
 
         # states = torch.cat(experiences.state)
         # actions = torch.cat(experiences.action)
@@ -88,52 +88,68 @@ class ReplayBuffer:
         num_samples: int,
     ):
         self.logger.debug(
-            f"Populating Replay Buffer with {num_samples} with budnle size {self.bundle_size}"
+            f"Populating Replay Buffer with {num_samples} with bundle size {self.bundle_size}"
         )
         # Number of batches
-        num_bundles = ceil(num_samples / self.bundle_size)
-        for _ in range(num_bundles):
+        num_bundles = ceil(num_samples / self.bundle_size)  # type: ignore
+        for bun in range(num_bundles):
+            amount = min(self.bundle_size, num_samples - bun * self.bundle_size)
             # Generate the initial_states
-            cur_states, cur_periods, true_hyps = self.environment.reset()  # type:ignore
+            cur_states, cur_periods, true_hyps = self.environment.reset(
+                amount
+            )  # type:ignore
             observed_states, actions, regrets = self._batch_loop(
-                policy, cur_states, cur_periods, true_hyps
+                policy, cur_states, cur_periods, true_hyps, amount
             )
-            regrets = self._batch_returns(regrets)
+            # returns = self._batch_returns(regrets)
+            returns = regrets
 
             self.logger.debug(
-                f"Adding new samples to replay memory with average regret {torch.mean(regrets)}"
+                f"Adding new samples to replay memory with average regret {torch.mean(returns)}"
             )
 
             # Now we only take the first `self.init_samples_to_take`
             # for i in range(self.init_samples_to_take):
-            for i in range(cur_states.shape[0]):
-                self.memory.append(
-                    Transition(
-                        observed_states[i, 0].tolist(),
-                        actions[i, 0].item(),
-                        observed_states[i, 1].tolist(),
-                        regrets[i, 0].item(),
+            for b in range(cur_states.shape[0]):
+                for j in range(cur_states.shape[1] - 1):
+                    self.memory.append(
+                        Transition(
+                            observed_states[b, j].tolist(),
+                            actions[b, j].item(),
+                            observed_states[b, j + 1].tolist(),
+                            returns[b, j].item(),
+                        )
                     )
-                )
 
         self.logger.debug("Replay Buffer populated")
 
-    def evaluate(self, observations: torch.Tensor, policy: Agent):
-        for i in range(observations.shape[1]):
-            cur_paths, cur_dec_rates, hyps = self.environment.reset()
-            for step_no in range(self.path_length):
-                cur_states = torch.cat((cur_dec_rates, cur_paths))
-                cur_actions = policy.evaluate(cur_states)
+    # def evaluate(self, observations: torch.Tensor, policy: Agent):
+    #     for i in range(observations.shape[1]):
+    #         cur_paths, cur_dec_rates, hyps = self.environment.reset()
+    #         for step_no in range(self.path_length):
+    #             cur_states = torch.cat((cur_dec_rates, cur_paths))
+    #             cur_actions = policy.evaluate(cur_states)
+    #     returns
 
-    def evaluate_batch(self, policy):
+    def evaluate_batch(self, policy, num_eval):
         self.logger.debug(f"Evaluating poliy")
-        cur_states, cur_periods, true_hyps = self.environment.reset()
-        _, _, regrets = self._batch_loop(
-            policy, cur_states, cur_periods, true_hyps, eval=True
-        )
-        returns = self._batch_returns(regrets)
-        avg_regrets = torch.mean(returns[:, 0], dim=0)
-        return avg_regrets
+        num_bundles = ceil(num_eval / self.bundle_size)
+        l_obs_states = []
+        l_actions = []
+        l_regrets = []
+        for bun in range(num_bundles):
+            amount = min(self.bundle_size, num_eval - bun * self.bundle_size)
+            cur_states, cur_periods, true_hyps = self.environment.reset(amount)
+            obs_states, actions, regrets = self._batch_loop(
+                policy, cur_states, cur_periods, true_hyps, amount, eval=True
+            )
+            l_obs_states.append(obs_states)
+            l_actions.append(actions)
+            l_regrets.append(regrets)
+        ostates = torch.cat(l_obs_states)
+        actions = torch.cat(l_actions)
+        regrets = torch.cat(l_regrets)
+        return ostates, actions, regrets
 
     def _batch_returns(self, regrets: torch.Tensor):
         returns = torch.zeros_like(regrets)
@@ -149,14 +165,13 @@ class ReplayBuffer:
         cur_decimation: torch.Tensor,
         cur_periods: torch.Tensor,
         true_hyps: torch.Tensor,
+        amount: int,
         eval=False,
     ):
         meta_state = torch.cat((true_hyps, cur_periods, cur_decimation), dim=-1)
-        generated_regrets = torch.zeros((self.bundle_size, self.path_length))
-        actions = torch.zeros((self.bundle_size, self.path_length))
-        observed_states = torch.zeros(
-            (self.bundle_size, self.path_length, 1 + self.sampbudget)
-        )
+        generated_regrets = torch.zeros((amount, self.path_length))
+        actions = torch.zeros((amount, self.path_length))
+        observed_states = torch.zeros((amount, self.path_length, 1 + self.sampbudget))
 
         # Start the loop
         for step in range(self.path_length):
@@ -174,14 +189,14 @@ class ReplayBuffer:
             actions[:, step] = period_delta
 
             # Obseve new state
-            returns, new_states = self.environment.step(
+            regret, new_states = self.environment.step(
                 meta_state.to(torch.long), period_delta
             )
 
             # Post-sim upadte
             meta_state = torch.cat((true_hyps, new_states), dim=-1)
             cur_periods = new_states[:, 0]
-            generated_regrets[:, step] = returns
+            generated_regrets[:, step] = regret
 
         return observed_states, actions, generated_regrets
 
