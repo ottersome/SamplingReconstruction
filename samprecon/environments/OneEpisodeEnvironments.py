@@ -61,6 +61,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         selection_probabilities: List[float],
         episode_length: int,
     ):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.hyp0_rates = hyp0_rates
         self.hyp1_rates = hyp1_rates
         self.rates = [hyp0_rates, hyp1_rates]
@@ -83,6 +84,15 @@ class MarkovianDualCumulativeEnvironment(Environment):
         self.cur_step = None
         self.batch_size = None  # Determined on reset
 
+        # Learnable scalar for log likelihood
+        self.log_likelihood_scalar = torch.tensor(
+            [0.1], requires_grad=True, device=self.device
+        )
+
+    @property
+    def learnable_pararms(self):
+        return [self.log_likelihood_scalar]
+
     def reset(self, batch_size):
         """
         returns
@@ -97,18 +107,24 @@ class MarkovianDualCumulativeEnvironment(Environment):
 
         self.batch_size = batch_size
         # TODO: for now we are using initial state of 0
-        hypothesis_selection = torch.multinomial(
-            self.selection_probabilities, self.batch_size, replacement=True
-        ).view(-1, 1)
-        rdr = self._gen_random_decimation_rate()
+        hypothesis_selection = (
+            torch.multinomial(
+                self.selection_probabilities, self.batch_size, replacement=True
+            )
+            .view(-1, 1)
+            .to(self.device)
+        )
+        rdr = self._gen_random_decimation_rate().to(self.device)
         # Based on decimation rate we estimate length
         # lengths = 1 + (self.sampling_budget - 1) * rdr
         # max_len
         init_states = torch.zeros((self.batch_size, 1)).to(torch.long)  # type: ignore
 
-        new_state = self._generate_decimated_observation(
-            rdr, init_states, hypothesis_selection
-        ).to(torch.long)
+        new_state = (
+            self._generate_decimated_observation(rdr, init_states, hypothesis_selection)
+            .to(torch.long)
+            .to(self.device)
+        )
         self.cur_step = 0
 
         return new_state, rdr.view(self.batch_size, -1), hypothesis_selection
@@ -134,12 +150,15 @@ class MarkovianDualCumulativeEnvironment(Environment):
         cur_hyp = cur_state[:, 0]
         cur_periods = cur_state[:, 1]
         obs_state = cur_state[:, 1:]
+        actions = actions.to(self.device)
 
         new_periods = (cur_periods + actions).clamp(1, self.decimation_ranges[-1])
 
-        new_dec_path = self._generate_decimated_observation(
-            new_periods, obs_state, cur_hyp
-        ).to(torch.long)
+        new_dec_path = (
+            self._generate_decimated_observation(new_periods, obs_state, cur_hyp)
+            .to(torch.long)
+            .to(self.device)
+        )
         new_state = torch.cat((new_periods.unsqueeze(-1), new_dec_path), dim=-1).to(
             torch.long
         )
@@ -159,7 +178,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
 
         # Calculate Regret
         regret = self._calculate_regret(
-            new_dec_path, cur_hyp, torch.Tensor(probabilities_per_samples)
+            new_dec_path,
+            cur_hyp,
+            torch.Tensor(probabilities_per_samples).to(self.device),
         )
 
         self.cur_step += 1
@@ -188,8 +209,8 @@ class MarkovianDualCumulativeEnvironment(Environment):
         next_steps = new_state[:, 1:]
 
         # OPTIM: make this nicer
-        ones = torch.ones_like(prev_steps)
-        zeros = torch.zeros_like(prev_steps)
+        ones = torch.ones_like(prev_steps).to(self.device)
+        zeros = torch.zeros_like(prev_steps).to(self.device)
         indexer = (
             torch.arange(probabilities.shape[0])
             .view(-1, 1)
@@ -202,7 +223,7 @@ class MarkovianDualCumulativeEnvironment(Environment):
         log_sum_l0 = torch.sum(torch.log(selection_l0), dim=-1)
         log_sum_l1 = torch.sum(torch.log(selection_l1), dim=-1)
 
-        ratio_matrix = log_sum_l0 - log_sum_l1
+        ratio_matrix = log_sum_l0 - log_sum_l1 + self.log_likelihood_scalar
 
         # Argmax this boi
         decisions = 1 - F.softmax(ratio_matrix)
@@ -247,7 +268,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
     def _single_state_step(
         self, last_states: torch.Tensor, hypothesis_selection: torch.Tensor
     ):
-        possible_probabilities = torch.Tensor((self.hypgens[0].P, self.hypgens[1].P))
+        possible_probabilities = torch.Tensor(
+            (self.hypgens[0].P, self.hypgens[1].P)
+        ).to(self.device)
         selection_probabilities = possible_probabilities[
             hypothesis_selection.squeeze(), last_states.squeeze(), :
         ]

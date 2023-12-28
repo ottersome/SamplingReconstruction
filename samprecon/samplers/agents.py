@@ -67,15 +67,18 @@ class EpsilonGreedyAgent(Agent):
         self.value_estimator = value_estimator
         self.epsilon = epsilon
         self.logger = setup_logger("EpsilonGreedyAgent")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def act(self, observation: torch.Tensor):
         batch_size = observation.shape[0]
         action_dim = self.value_estimator.get_action_dim()
-        actions = torch.zeros((batch_size), dtype=torch.long)
+        actions = torch.zeros((batch_size), dtype=torch.long).to(self.device)
 
-        rand_mask = torch.rand(batch_size) < self.epsilon
-        actions[rand_mask] = torch.randint(action_dim, (torch.sum(rand_mask).tolist(),))
-        actions[~rand_mask] = torch.argmax(
+        rand_mask = torch.rand(batch_size).to(self.device) < self.epsilon
+        actions[rand_mask] = torch.randint(
+            action_dim, (torch.sum(rand_mask).tolist(),)
+        ).to(self.device)
+        actions[~rand_mask] = torch.argmin(
             self.value_estimator.estimate(observation[~rand_mask]), dim=-1
         )
 
@@ -84,7 +87,7 @@ class EpsilonGreedyAgent(Agent):
     def evaluate(self, observation: torch.Tensor):
         batch_size = observation.shape[0]
 
-        actions = torch.argmax(self.value_estimator.estimate(observation), dim=-1)
+        actions = torch.argmin(self.value_estimator.estimate(observation), dim=-1)
 
         return (
             actions.view(batch_size, -1),

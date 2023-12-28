@@ -40,6 +40,7 @@ class ReplayBuffer:
         bundle_size=32,
         return_gamma: float = 0.9,
     ):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.return_gamma = return_gamma
         self.decimation_ranges = decimation_ranges
         self.sampling_controls = sampling_controls
@@ -72,10 +73,10 @@ class ReplayBuffer:
         # returns = torch.cat(experiences.returns)
         # next_state = torch.cat(experiences.next_state)
 
-        states = torch.Tensor(experiences.state)
-        actions = torch.Tensor(experiences.action)
-        returns = torch.Tensor(experiences.returns)
-        next_state = torch.Tensor(experiences.next_state)
+        states = torch.tensor(experiences.state, device=self.device)
+        actions = torch.tensor(experiences.action, device=self.device)
+        returns = torch.tensor(experiences.returns, device=self.device)
+        next_state = torch.tensor(experiences.next_state, device=self.device)
 
         return states, actions, returns, next_state
 
@@ -88,7 +89,7 @@ class ReplayBuffer:
         num_samples: int,
     ):
         self.logger.debug(
-            f"Populating Replay Buffer with {num_samples} with bundle size {self.bundle_size}"
+            f"Populating Replay Buffer (of length {len(self.memory)}) with {num_samples} with bundle size {self.bundle_size}"
         )
         # Number of batches
         num_bundles = ceil(num_samples / self.bundle_size)  # type: ignore
@@ -168,10 +169,14 @@ class ReplayBuffer:
         amount: int,
         eval=False,
     ):
-        meta_state = torch.cat((true_hyps, cur_periods, cur_decimation), dim=-1)
-        generated_regrets = torch.zeros((amount, self.path_length))
-        actions = torch.zeros((amount, self.path_length))
-        observed_states = torch.zeros((amount, self.path_length, 1 + self.sampbudget))
+        meta_state = torch.cat((true_hyps, cur_periods, cur_decimation), dim=-1).to(
+            self.device
+        )
+        generated_regrets = torch.zeros((amount, self.path_length)).to(self.device)
+        actions = torch.zeros((amount, self.path_length)).to(self.device)
+        observed_states = torch.zeros(
+            (amount, self.path_length, 1 + self.sampbudget)
+        ).to(self.device)
 
         # Start the loop
         for step in range(self.path_length):

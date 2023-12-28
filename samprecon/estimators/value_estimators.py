@@ -26,13 +26,14 @@ class ValueFunc(ValueEstimator, nn.Module):
             nn.ReLU(),
             nn.Linear(256, action_dim),
         )
+        self.output_relu = nn.ReLU()
         # self.model = nn.LSTM(state_dim + 1, state_dim + 1, batch_first=True)
         # self.value = nn.Linear(state_dim + 1, 1)
 
     def forward(self, x):
         # out, hidden = self.model(x)
         # y = self.value(out[:, -1, :])
-        y = self.model(x)
+        y = self.output_relu(self.model(x))
         return y
 
     def estimate(self, state) -> torch.Tensor:

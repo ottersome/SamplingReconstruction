@@ -42,7 +42,7 @@ from samprecon.utils.utils import setup_logger
 
 # %% [python]
 hyp0_baseline_rates = {"lam": 1 / 10, "mu": 4 / 10}
-hyp1_baseline_rates = {"lam": 4 / 10, "mu": 4 / 10}
+hyp1_baseline_rates = {"lam": 1 / 1, "mu": 4 / 1}
 logger = setup_logger("Main")
 
 # Set random seeds
@@ -57,7 +57,7 @@ action_space_size = len(sampling_controls)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 LR_ACTOR = 1e-3
-LR_CRITIC = 1e-3
+LR_CRITIC = 1e-2
 
 sampling_budget = 10
 highest_frequency = 1e-0
@@ -70,18 +70,18 @@ avg_timespan = torch.mean(
 )
 decimation_ranges = [1, int(avg_timespan // highest_frequency * 4)]
 episode_length = 12
-train_batch_size = 512
-target_net_update_epochs = 10
+train_batch_size = 64
+target_net_update_epochs = 2
 
 
-epochs = 1000
+epochs = 100
 epsilon_start = 1.0
 epsilon_end = 0.01
 
 return_gamma = 0.90
 
-epsilon_decay = epochs // 2
-evaluation_frequency = epochs // 10
+epsilon_decay = 10
+evaluation_frequency = 5
 
 
 # %% [markdown]
@@ -91,19 +91,16 @@ evaluation_frequency = epochs // 10
 
 # Setup the parameters and optimizers
 # sampling_agent = SoftmaxAgent(sampling_budget + 1, len(sampling_controls)).to(device)
-policy_net = ValueFunc(sampling_budget + 1, action_space_size)
-target_net = ValueFunc(sampling_budget + 1, action_space_size)
+policy_net = ValueFunc(sampling_budget + 1, action_space_size).to(device)
+target_net = ValueFunc(sampling_budget + 1, action_space_size).to(device)
 target_net.eval()  # CHECK: if you have to load critic_new weights
 
 # actor_optimizer = optim.Adam(sampling_agent.parameters(), lr=LR_ACTOR)
-critic_optimizer = optim.Adam(policy_net.parameters(), lr=LR_CRITIC)
 
 
 # %% [markdown]
 # ## Setup Environments
-sampling_agent = EpsilonGreedyAgent(
-    policy_net, epsilon_start
-)  # CHECK: shoudl I use greedy new?
+sampling_agent = EpsilonGreedyAgent(policy_net, epsilon_start)
 
 # Setup The Environment
 dual_env = MarkovianDualCumulativeEnvironment(
@@ -128,6 +125,10 @@ replay_buffer = ReplayBuffer(
     sampling_controls=sampling_controls,
     buffer_size=4028,
     return_gamma=return_gamma,
+)
+
+critic_optimizer = optim.Adam(
+    list(policy_net.parameters()) + dual_env.learnable_pararms, lr=LR_CRITIC
 )
 
 # %% [markdown]
@@ -174,16 +175,25 @@ def evaluate_performance(replay_buffer: ReplayBuffer):
     # Estimated Returns
     # For now only using the first states
     first_states = obs_states[:, 0, :].squeeze()
-    actions_become_idx = (
-        torch.Tensor([actions_to_idx[int(a.item())] for a in actions[:, 0]])
-        .view(-1, 1)
-        .to(torch.long)
-    )
+    actions_become_idx = torch.tensor(
+        [actions_to_idx[int(a.item())] for a in actions[:, 0]],
+        dtype=torch.long,
+        device=device,
+    ).view(-1, 1)
+    periods = obs_states[:, :, 0].squeeze()
+    mean_period = torch.mean(periods).item()
+    var_period = torch.var(periods).item()
+
     second = obs_states[:, 1, :].squeeze()
     estimation = policy_net(first_states).gather(dim=1, index=actions_become_idx)
-    actual_value = eval_returns[:, 0].squeeze() + target_net(second).max(1)[0].detach()
+    actual_value = eval_returns[:, 0].squeeze() + target_net(second).min(1)[0].detach()
 
-    return torch.mean(estimation).item(), torch.mean(actual_value).item()
+    return (
+        torch.mean(estimation).item(),
+        torch.mean(actual_value).item(),
+        mean_period,
+        var_period,
+    )
 
 
 # %% [python]
@@ -191,13 +201,23 @@ def evaluate_performance(replay_buffer: ReplayBuffer):
 evaluations_est = []
 evaluations_actual = []
 q_estimation_losses = []
+mean_periods = []
+var_periods = []
 e_bar = tqdm(range(epochs), desc="Epochs", leave=True, position=0)
 estimated_regrets = []
 actual_regrets = []
 
 for i in range(epochs):
+    ebar_msg = ""
+
+    # Performance so far
+    eval_act_moving_avg = (
+        np.mean(evaluations_actual[-10:]) if len(evaluations_actual) > 0 else 0
+    )
+    ebar_msg += f"Eval Actual: {eval_act_moving_avg:.3f} | "
+
     # Create some initial data using the initial policy
-    e_bar.set_description("Populating replay buffer")
+    e_bar.set_description(ebar_msg + " Populating replay buffer")
     addition = len(replay_buffer) // 10 if i > 0 else train_batch_size
     replay_buffer.populate_replay_buffer(
         policy=sampling_agent,
@@ -208,8 +228,9 @@ for i in range(epochs):
     # Learn from said samples
     buffer_len = len(replay_buffer)
     num_batches = ceil(buffer_len / train_batch_size)
+    # num_batches = 1
 
-    e_bar.set_description("Batch optimization")
+    e_bar.set_description(ebar_msg + " Batch optimization")
     b_bar = tqdm(range(num_batches), desc="Batches", leave=False, position=1)
     batch_qestimation_loss = []
     for bn in range(num_batches):
@@ -219,7 +240,9 @@ for i in range(epochs):
             amount=train_batch_size
         )
         actions_become_idx = torch.tensor(
-            [actions_to_idx[a.item()] for a in actions], dtype=torch.long  # type:ignore
+            [actions_to_idx[a.item()] for a in actions],
+            dtype=torch.long,  # type:ignore
+            device=device,
         )
 
         policy_estimations = policy_net(states)
@@ -229,16 +252,16 @@ for i in range(epochs):
         )
 
         target_estimations = (
-            returns + return_gamma * target_net(next_states).max(1)[0].detach()
+            returns + return_gamma * target_net(next_states).min(1)[0].detach()
         )
 
         # Loss
-        # loss = torch.nn.functional.mse_loss(
-        #     policy_estimations_gathered, target_estimations
-        # )
-        loss = torch.nn.functional.smooth_l1_loss(
+        loss = torch.nn.functional.mse_loss(
             policy_estimations_gathered, target_estimations
         )
+        # loss = torch.nn.functional.smooth_l1_loss(
+        #     policy_estimations_gathered, target_estimations
+        # )
         batch_qestimation_loss.append(loss.item())
 
         # Optimize the model
@@ -264,9 +287,11 @@ for i in range(epochs):
         target_net.load_state_dict(policy_net.state_dict())
         target_net.eval()  # To be safe
     if i % evaluation_frequency == 0:
-        est, actual = evaluate_performance(replay_buffer)
+        est, actual, mperiod, vperiod = evaluate_performance(replay_buffer)
         evaluations_est.append(est)
         evaluations_actual.append(actual)
+        mean_periods.append(mperiod)
+        var_periods.append(vperiod)
     e_bar.update(1)
 
 # %% [markdown]
@@ -278,22 +303,44 @@ for i in range(epochs):
 import matplotlib.pyplot as plt
 
 # Plot the evaluation regret
-fig, axs = plt.subplots(1, 2, figsize=(14, 14))
-axs[0].plot(
+# fig, axs = pl(t.subplots(2, 2, figsize=(14, 14))
+plt.figure(figsize=(14, 14))
+
+plt.subplot(2, 1, 1)
+
+# Axes below merge into one
+plt.plot(np.arange(0, epochs, evaluation_frequency), mean_periods, label="Mean Actions")
+var_pos = np.array(mean_periods) + np.array(var_periods)
+var_neg = np.array(mean_periods) - np.array(var_periods)
+plt.fill_between(
+    np.arange(0, epochs, evaluation_frequency),
+    var_pos,
+    var_neg,
+    alpha=0.2,
+    label="Variance",
+)
+
+# Now  like above but a graph that displays means and averages
+
+plt.legend()
+plt.subplot(2, 2, 3)
+plt.plot(
     np.arange(0, epochs, evaluation_frequency),
     evaluations_est,
     label="Avg Estimated Evaluation",
 )
-axs[0].plot(
+plt.plot(
     np.arange(0, epochs, evaluation_frequency),
     evaluations_actual,
     label="Avg Actual Evaluation",
 )
-axs[0].set_title("Performance")
-axs[0].legend()
+plt.title("Regret")
+plt.legend()
 
-axs[1].plot(range(epochs), q_estimation_losses, label="Loss Estimation")
-axs[1].set_title("Q-Estimation Losses")
+plt.subplot(2, 2, 4)
+
+plt.plot(range(epochs), q_estimation_losses, label="Loss Estimation")
+plt.title("Q-Estimation Losses")
 
 
 plt.tight_layout()
