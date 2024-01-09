@@ -12,7 +12,7 @@ from scipy.linalg import expm
 
 from samprecon.reconstructors.reconstruct_intf import Reconstructor
 from samprecon.samplers.spatial_transformers import (
-    LocalizationNework,
+    LocalizationNeworke
     differentiable_uniform_sampler,
 )
 from samprecon.utils.utils import setup_logger
@@ -322,6 +322,11 @@ class MarkovianUniformCumulativeEnvironment:
         return initial_state
 
     def step(self, action: torch.Tensor) -> Dict[str, Any]:
+        """
+        Params:
+        ~~~~~~~
+        action: current decimation rate
+        """
         # TODO: We may be able to change this into a cumulative gradient
         # New State
         new_state = torch.Tensor(
@@ -341,9 +346,12 @@ class MarkovianUniformCumulativeEnvironment:
             # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
         ).squeeze(0)
 
+
         logsoft_recon = F.log_softmax(reconstruction, dim=-1)
         regret = self.criterion(logsoft_recon, new_state.to(torch.long))
 
+        actual_categories = torch.argmax(F.softmax(reconstruction, dim=-1),dim=-1)
+        self.logger.debug(f"Reconstruction sum {actual_categories}")
         # self.prev_state = new_state.to(torch.float)
 
         return (

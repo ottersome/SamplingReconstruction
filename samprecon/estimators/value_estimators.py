@@ -41,3 +41,24 @@ class ValueFunc(ValueEstimator, nn.Module):
 
     def get_action_dim(self) -> int:
         return self.action_dim
+
+class SequenceValue(ValueEstimator, nn.Module):
+
+    def __init__(self, state_dim: int, action_dim: int):  # Decimated
+        super().__init__()
+        self.action_dim = action_dim
+
+        self.lstm = nn.LSTM(state_dim, state_dim, batch_first=True)
+        self.linear = nn.Linear(state_dim, action_dim)
+
+    def forward(self, x):
+        out, hidden = self.lstm(x)
+        y = self.linear(out[:, -1, :])
+        # TODO: place a relu here maybe
+        return y
+
+    def estimate(self, state) -> torch.Tensor:
+        return self.__call__(state)
+
+    def get_action_dim(self) -> int:
+        return self.action_dim

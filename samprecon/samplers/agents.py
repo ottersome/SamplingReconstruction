@@ -39,11 +39,11 @@ class SoftmaxAgent(Agent, nn.Module):
     This one will take a whole range of decimation rates it can freely choose from
     """
 
-    def __init__(self, sampling_budget: int, dec_range):
+    def __init__(self, state_size: int, dec_range):
         super().__init__()
         self.dec_range = dec_range
         self.model = nn.Sequential(
-            nn.Linear(sampling_budget, 128),
+            nn.Linear(state_size, 128),
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.Linear(64, dec_range),  # Keep it as regression for now
@@ -56,9 +56,17 @@ class SoftmaxAgent(Agent, nn.Module):
 
     def forward(self, state):
         # We want regressiont to be capt between 1 -> action_size:
-        y = self.model(state)
+        return F.softmax(self.model(state), dim=-1)
 
-    def act(self, observation: torch.Tensor):
+    def act(self, observation: torch.Tensor) -> torch.Tensor:
+        return self.forward(observation)
+    
+    def change_property(self, **kwargs):
+        # Change self property as per kwargs
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+            self.logger.debug(f"Setting up {k} to {v}")
+    def evaluate(self, observation: torch.Tensor):
         return self.forward(observation)
 
 
