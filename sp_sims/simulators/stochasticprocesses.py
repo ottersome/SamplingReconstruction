@@ -142,16 +142,50 @@ class BDStates:
 
         # self.curr_history = [self.init_state]  # TODO: make this into a limited FIFO ?
 
-    def sample(self, decimation_rate: int, sampling_budget: int) -> List:
-        length = 1 + ceil(decimation_rate * (sampling_budget - 1))
-        sample_list = [self.init_state]
+    def sample(
+        self,
+        decimation_rates: torch.Tensor,
+        sampling_budget: int,
+        last_states: torch.Tensor = torch.Tensor([]),
+    ) -> torch.Tensor:
+        ## Old Approach
+        # length = 1 + ceil(decimation_rate * (sampling_budget - 1))
+        # sample_list = [self.init_state]
+        # for i in range(length - 1):
+        #     new_state = np.random.choice(
+        #         np.arange(self.max_state + 1), p=self.P[sample_list[-1], :]
+        #     ).squeeze()
+        #     sample_list.append(new_state)
+
+        # (New) Tensored Approach
+        # CHECK: validity in debugger
+        widest_period = torch.max(decimation_rates)
+        length = 1 + ceil(widest_period * (sampling_budget - 1))
+        probs_tensor = torch.Tensor(self.P).to(decimation_rates.device)
+
+        final_samples = torch.full(
+            (decimation_rates.shape[0], sampling_budget), -1
+        )  # -1 for debug
+        idxs_to_fill = torch.zeros((decimation_rates.shape[0], 1))
+
+        tape_head = last_states.clone()
+
         for i in range(length - 1):
-            new_state = np.random.choice(
-                np.arange(self.max_state + 1), p=self.P[sample_list[-1], :]
-            ).squeeze()
-            sample_list.append(new_state)
-        # self.cur_history = sample_list
-        return sample_list
+            selection_probabilities = probs_tensor[tape_head.squeeze(), :]
+            next_states = torch.multinomial(selection_probabilities, 1)
+
+            # Determine which ones to include
+            sample_idxs = (i % decimation_rates) == 0 if i != 0 else torch.full_like(
+                decimation_rates, False
+            )
+            rows_idxs = torch.nonzero(sample_idxs, as_tuple=True)
+            if(len(rows_idxs) == 0):
+                continue
+            final_samples[rows_idxs[0], idxs_to_fill[rows_idxs]] = next_states
+            idxs_to_fill += sample_idxs
+            tape_head = next_states
+
+        return final_samples
 
 
 class EmbeddedMarkC_BD(SPManager):

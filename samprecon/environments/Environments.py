@@ -10,9 +10,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 from scipy.linalg import expm
 
+from samprecon.feedbacksigs.feedbacks import Feedbacks, LogEstimator, Reconstructor
 from samprecon.reconstructors.reconstruct_intf import Reconstructor
 from samprecon.samplers.spatial_transformers import (
-    LocalizationNeworke
+    LocalizationNework,
     differentiable_uniform_sampler,
 )
 from samprecon.utils.utils import setup_logger
@@ -171,7 +172,9 @@ class MarkovianDualCumulativeEnvironment(Environment):
             q1 = get_q_mat(self.rates[1], self.num_states)
             p0 = expm(
                 q0
-                * p.item()  # TODO: since highres is 1 right now then this works, but we need to multiply p by highres rate
+                * (
+                    self.high_res_frequency * p.item()
+                )  # CHECK THIS MULTIPLCIAITON IS CORRECT
             )  # CHECK: There might not exist a unique exponential, or a solution at all
             p1 = expm(q1 * p.item())
             probabilities_per_samples.append([p0, p1])
@@ -291,18 +294,20 @@ class MarkovianUniformCumulativeEnvironment:
         self,
         # Modules
         state_generator: BDStates,
-        reconstructor: nn.Module,
+        # reconstructor: nn.Module,
+        feedback: Feedbacks,
         # Some othe random varsj
         starting_decrate: int,
         sampling_budget: int = 4,  # This stays fixed
     ):
         # self.device = torch.device("cuda")
         self.state_generator = state_generator
-        self.num_states = state_generator.max_state + 1
+        self.num_states = state_generator.max_state
         self.cur_decimation_rate = starting_decrate
         self.sampling_budget = sampling_budget
         # Modules
-        self.reconstructor = reconstructor  # .to(self.device)
+        # self.reconstructor = reconstructor  # .to(self.device)
+        self.feedback = feedback
 
         # self.reconstructor_last_weights = list(self.reconstructor.state_dict().values())
 
@@ -313,15 +318,25 @@ class MarkovianUniformCumulativeEnvironment:
         self.criterion = nn.NLLLoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def reset(self, default_dec_rate):
-        initial_state = (
-            torch.Tensor(
-                self.state_generator.sample(default_dec_rate, self.sampling_budget)
-            ).to(torch.float)[:: int(default_dec_rate)]
-        )[: self.sampling_budget]
-        return initial_state
+    def reset(self, dec_rates, init_states):
+        """
+        Samples *a budgeted chain*, not a single state
+        """
+        assert dec_rates.shape[0] == init_states.shape[0]
+        self.batch_size = dec_rates.shape[0]
 
-    def step(self, action: torch.Tensor) -> Dict[str, Any]:
+        # initial_tape = (
+        #     torch.Tensor(
+        #         self.state_generator.sample(default_dec_rates, self.sampling_budget)
+        #     ).to(torch.float)[:: int(default_dec_rates)]
+        # )[: self.sampling_budget]
+        initial_tape = self.state_generator.sample(
+            dec_rates, self.sampling_budget, init_states
+        )
+
+        return initial_tape
+
+    def step(self, action: torch.Tensor) -> Tuple[Any, Any, Any]:
         """
         Params:
         ~~~~~~~
@@ -329,29 +344,17 @@ class MarkovianUniformCumulativeEnvironment:
         """
         # TODO: We may be able to change this into a cumulative gradient
         # New State
-        new_state = torch.Tensor(
-            self.state_generator.sample(action, self.sampling_budget)
-        ).to(self.device)
+        new_state = (
+            torch.Tensor(self.state_generator.sample(action, self.sampling_budget))
+            .to(self.device)
+            .to(torch.long)
+        )
 
-        new_state_oh = F.one_hot(
-            new_state.view(1, -1).to(torch.long),
-            num_classes=self.state_generator.max_state + 1,
-        ).float()
+        # dec_state = differentiable_uniform_sampler(new_state_oh, action)
+        regret = self.feedback(new_state, action)
 
-        dec_state = differentiable_uniform_sampler(new_state_oh, action)
-
-        reconstruction = self.reconstructor(
-            dec_state,
-            action,
-            # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
-        ).squeeze(0)
-
-
-        logsoft_recon = F.log_softmax(reconstruction, dim=-1)
-        regret = self.criterion(logsoft_recon, new_state.to(torch.long))
-
-        actual_categories = torch.argmax(F.softmax(reconstruction, dim=-1),dim=-1)
-        self.logger.debug(f"Reconstruction sum {actual_categories}")
+        # actual_categories = torch.argmax(F.softmax(reconstruction, dim=-1), dim=-1)
+        # self.logger.debug(f"Reconstruction sum {actual_categories}")
         # self.prev_state = new_state.to(torch.float)
 
         return (
@@ -359,6 +362,18 @@ class MarkovianUniformCumulativeEnvironment:
             regret,
             self.done,
         )
+
+    def _single_state_step(
+        self, last_states: torch.Tensor, hypothesis_selection: torch.Tensor
+    ):
+        possible_probabilities = torch.Tensor(
+            (self.hypgens[0].P, self.hypgens[1].P)
+        ).to(self.device)
+        selection_probabilities = possible_probabilities[
+            hypothesis_selection.squeeze(), last_states.squeeze(), :
+        ]
+        next_states = torch.multinomial(selection_probabilities, 1)
+        return next_states
 
 
 # %%

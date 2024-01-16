@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from samprecon.environments.OneEpisodeEnvironments import (
+from samprecon.environments.Environments import (
     Environment,
     MarkovianDualCumulativeEnvironment,
 )
@@ -93,6 +93,7 @@ class ReplayBuffer:
         )
         # Number of batches
         num_bundles = ceil(num_samples / self.bundle_size)  # type: ignore
+
         for bun in range(num_bundles):
             amount = min(self.bundle_size, num_samples - bun * self.bundle_size)
             # Generate the initial_states

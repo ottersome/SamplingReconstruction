@@ -22,3 +22,4 @@ def setup_logger(name: str, level=logging.INFO):
     logger.addHandler(fh)
 
     return logger
+

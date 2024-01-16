@@ -29,9 +29,7 @@ import torch
 import torch.optim as optim
 from tqdm import tqdm
 
-from samprecon.environments.OneEpisodeEnvironments import (
-    MarkovianDualCumulativeEnvironment,
-)
+from samprecon.environments.Environments import MarkovianDualCumulativeEnvironment
 from samprecon.estimators.value_estimators import ValueFunc
 from samprecon.memory.replaymemory import ReplayBuffer
 from samprecon.samplers.agents import EpsilonGreedyAgent
