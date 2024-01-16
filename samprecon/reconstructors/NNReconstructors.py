@@ -22,42 +22,49 @@ class RNNReconstructor(nn.Module):
         super().__init__()
         # Take a variable length scalar input signals
         self.max_decimation_rate = max_decimation_rate
-        self.hidden_size = amnt_states + 1 + 1  # One for rate and one for count
+        self.hidden_size = amnt_states + 1 #+ 1  # One for rate and one for count
+        self.amnt_states = amnt_states
         self.rnn = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
-        self.classifier = nn.Linear(self.hidden_size, amnt_states)
+        self.classifier = nn.Linear(self.hidden_size, amnt_states + 1)  # For padding
         self.sm = nn.LogSoftmax(dim=-1)
 
     def forward(
         self,
-        subsampled_signal: torch.Tensor,
-        rate: torch.Tensor,
-        # reconstruct_length: int,
+        subsampled_signal_oh: torch.Tensor,
     ):
         """
-        Outputs logits!
+        Parameters
+        ~~~~~~~~~~
+            subsampled_signal_oh: (batch_size) x (longest_seq_len) (Padded ofc)
         """
         # Append subsampled_signal, rate, reconstruct_length
         # rate_cloned = rate.repeat_interleave(reconstruct_length, dim=1).unsqueeze(
         # -1
         # )
-        mask = torch.ones(
-            (1, subsampled_signal.shape[1]), dtype=torch.float32
-        ).unsqueeze(-1).to(subsampled_signal.device)
-        rate_cloned = (mask * rate) / self.max_decimation_rate
-
-        x = torch.cat((subsampled_signal, rate_cloned), dim=-1)
-        x_count = (
-            torch.flip(torch.arange(subsampled_signal.shape[1]), [0]).view(
-                x.shape[0], -1, 1
-            )
-            / subsampled_signal.shape[1]
-        ).to(subsampled_signal.device)
-        x = torch.cat((x, x_count), dim=-1)
+        # mask = (
+        #     torch.ones((1, subsampled_signal.shape[1]), dtype=torch.float32)
+        #     .unsqueeze(-1)
+        #     .to(subsampled_signal.device)
+        # )
+        # rate_cloned = (mask * rate) / self.max_decimation_rate
+        #
+        # x = torch.cat((subsampled_signal, rate_cloned), dim=-1)
+        # x_count = (
+        #     torch.flip(torch.arange(subsampled_signal.shape[1]), [0]).view(
+        #         x.shape[0], -1, 1
+        #     )
+        #     / subsampled_signal.shape[1]
+        # ).to(subsampled_signal.device)
+        # x = torch.cat((x, x_count), dim=-1)
         # Normalize on second dimension
 
-        out, hiddn = self.rnn(x)  # Check what is the difference between, out and hiddn
+        out, hiddn = self.rnn(
+            subsampled_signal_oh
+        )  # Check what is the difference between, out and hiddn
         y = self.classifier(out)
-        #y = self.sm(y)
+        # y = self.sm(y)
+
+        # TODO: return the feedback
         return y
 
     def initialize_grad_hooks(self):

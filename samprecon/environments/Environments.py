@@ -16,7 +16,7 @@ from samprecon.samplers.spatial_transformers import (
     LocalizationNework,
     differentiable_uniform_sampler,
 )
-from samprecon.utils.utils import setup_logger
+from samprecon.utils.utils import dec_rep_to_batched_rep, setup_logger
 from sp_sims.detectors.pearsonneyman import take_guesses
 from sp_sims.simulators.stochasticprocesses import BDStates
 from sp_sims.utils.utils import get_q_mat
@@ -298,13 +298,15 @@ class MarkovianUniformCumulativeEnvironment:
         feedback: Feedbacks,
         # Some othe random varsj
         starting_decrate: int,
-        sampling_budget: int = 4,  # This stays fixed
+        max_decimation: int,
+        sampling_budget: int,
     ):
         # self.device = torch.device("cuda")
         self.state_generator = state_generator
         self.num_states = state_generator.max_state
         self.cur_decimation_rate = starting_decrate
         self.sampling_budget = sampling_budget
+        self.max_decimation = max_decimation
         # Modules
         # self.reconstructor = reconstructor  # .to(self.device)
         self.feedback = feedback
@@ -330,35 +332,53 @@ class MarkovianUniformCumulativeEnvironment:
         #         self.state_generator.sample(default_dec_rates, self.sampling_budget)
         #     ).to(torch.float)[:: int(default_dec_rates)]
         # )[: self.sampling_budget]
-        initial_tape = self.state_generator.sample(
+        sampled_tape, fullres_tape = self.state_generator.sample(
             dec_rates, self.sampling_budget, init_states
         )
 
-        return initial_tape
+        return sampled_tape, fullres_tape
 
-    def step(self, action: torch.Tensor) -> Tuple[Any, Any, Any]:
+    def step(
+        self, cur_state: torch.Tensor, actions: torch.Tensor
+    ) -> Tuple[Any, Any, Any]:
         """
         Params:
         ~~~~~~~
-        action: current decimation rate
+            cur_state: any 2d tensor where the last column denotes the last states seen
+            new_dec_rates: current decimation rate
         """
-        # TODO: We may be able to change this into a cumulative gradient
         # New State
-        new_state = (
-            torch.Tensor(self.state_generator.sample(action, self.sampling_budget))
-            .to(self.device)
-            .to(torch.long)
+        next_init_states = cur_state[:, -1]
+        cur_decimation_period = cur_state[:, 0].view(-1,1)
+        new_dec_factor = torch.clamp(
+            cur_decimation_period + actions, 1, int(self.max_decimation)
         )
 
-        # dec_state = differentiable_uniform_sampler(new_state_oh, action)
-        regret = self.feedback(new_state, action)
+        # Perform actions 
+        sampled_chain, fullres_chain = self.state_generator.sample(
+            new_dec_factor, self.sampling_budget, next_init_states
+        )
+        sampled_chain = sampled_chain.to(self.device).to(torch.long)
+
+        # dec_state = differentiable_uniform_sampler(new_state_oh, new_dec_rates) # TOREM:
+
+        oh_fullres_sig = dec_rep_to_batched_rep(
+            sampled_chain,
+            new_dec_factor,  # CHECK: If first column contains periods
+            self.sampling_budget,
+            self.num_states + 1,  # For Padding
+            add_position=False,  # TODO: See 'true' helps
+        )
+        regret = self.feedback(oh_fullres_sig, actions, fullres_chain)
 
         # actual_categories = torch.argmax(F.softmax(reconstruction, dim=-1), dim=-1)
         # self.logger.debug(f"Reconstruction sum {actual_categories}")
         # self.prev_state = new_state.to(torch.float)
+        new_state = torch.cat((new_dec_factor, sampled_chain), dim=-1)
 
-        return (
-            new_state[:: int(action)][: self.sampling_budget].view(1, -1),
+        return (  # CHECK: This probably unnecessary ::actions decimation
+            # sampled_chain[:: int(actions)][: self.sampling_budget].view(1, -1),
+            new_state,
             regret,
             self.done,
         )

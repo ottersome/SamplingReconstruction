@@ -2,13 +2,15 @@
 Any utils related to Reinforcement Learning Computations
 """
 
+import torch
+
 
 def calculate_returns(rewards, gamma):
-    returns = []
-    R = 0
+    R = torch.zeros((rewards.shape[0]))
     n = len(rewards)
-    for i, r in enumerate(reversed(rewards)):
-        R = r + gamma * R
-        returns.insert(0, R)
+    returns = torch.zeros_like(rewards)
+
+    for i in range(returns.shape[1]-1,-1,-1):
+        returns[:,i] = rewards[:,i] + gamma * R
 
     return returns

@@ -1,6 +1,9 @@
 import logging
 import os
 
+import torch
+import torch.nn.functional as F
+
 
 def setup_logger(name: str, level=logging.INFO):
     os.makedirs("./logs", exist_ok=True)
@@ -23,3 +26,39 @@ def setup_logger(name: str, level=logging.INFO):
 
     return logger
 
+
+def dec_rep_to_batched_rep(
+    dec_tape: torch.Tensor,
+    dec_periods: torch.Tensor,
+    samp_budget: int,
+    num_classes: int,
+    add_position: bool,
+):
+    """
+    Takes a representation of B samples all under the same sampling budget.
+    Then expands into a one hot encoded representation that can be fed as a batch to the algorithm
+    """
+
+    batch_size = dec_tape.shape[0]
+    # Create Lengths
+    lengths = 1 + (samp_budget - 1) * dec_periods
+    max_len = torch.max(lengths)
+    # Create Masks with lengths:
+    masks = torch.zeros((dec_tape.shape[0], samp_budget), dtype=torch.float32)
+    for i, length in enumerate(lengths):
+        masks[i, :length] = 1
+    # Create One Hot representations
+    # All zeros means unknown. (Though I'm not sure this is the best way to specify it)
+    one_hot = F.one_hot(dec_tape, num_classes=num_classes + 1).float()  # +1 for padding
+
+    full_resolution = torch.zeros(
+        batch_size, max_len.item(), num_classes + 1
+    )  # type:ignore
+    # Place the onehot decimated samples into full)resolutio
+    for b in range(batch_size):  # CHECK: Proper behavior (should be fine)
+        aranged_idx = torch.arange(
+            0, (dec_periods[b] * (samp_budget - 1) + 1).item(), dec_periods[b].item()
+        )
+        full_resolution[b, aranged_idx] = one_hot[b, :].float()
+
+    return full_resolution

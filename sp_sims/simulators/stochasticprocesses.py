@@ -1,5 +1,5 @@
 from math import ceil
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -146,8 +146,8 @@ class BDStates:
         self,
         decimation_rates: torch.Tensor,
         sampling_budget: int,
-        last_states: torch.Tensor = torch.Tensor([]),
-    ) -> torch.Tensor:
+        init_states: torch.Tensor = torch.Tensor([]),
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         ## Old Approach
         # length = 1 + ceil(decimation_rate * (sampling_budget - 1))
         # sample_list = [self.init_state]
@@ -159,33 +159,49 @@ class BDStates:
 
         # (New) Tensored Approach
         # CHECK: validity in debugger
+        batch_size = decimation_rates.shape[0]
+        num_states = self.P.shape[0]
         widest_period = torch.max(decimation_rates)
-        length = 1 + ceil(widest_period * (sampling_budget - 1))
+        length = 1 + widest_period * (sampling_budget - 1)
         probs_tensor = torch.Tensor(self.P).to(decimation_rates.device)
 
-        final_samples = torch.full(
-            (decimation_rates.shape[0], sampling_budget), -1
-        )  # -1 for debug
-        idxs_to_fill = torch.zeros((decimation_rates.shape[0], 1))
+        final_samples = torch.full((batch_size, sampling_budget), -1)  # -1 for debug
+        idxs_to_fill = torch.full((batch_size, 1), 1).to(torch.long)
 
-        tape_head = last_states.clone()
+        full_history = torch.full(
+            (batch_size, length), num_states  # num_states is value for padding
+        )
+        full_history[:, 0] = init_states.view(-1)
 
-        for i in range(length - 1):
+        final_samples[:, 0] = init_states.view(-1)
+        tape_head = init_states.clone()
+
+        for i in range(1, length):
             selection_probabilities = probs_tensor[tape_head.squeeze(), :]
             next_states = torch.multinomial(selection_probabilities, 1)
 
             # Determine which ones to include
-            sample_idxs = (i % decimation_rates) == 0 if i != 0 else torch.full_like(
-                decimation_rates, False
+            sample_idxs = (
+                (i % decimation_rates) == 0
+                if i != 0
+                else torch.full_like(decimation_rates, False)
             )
-            rows_idxs = torch.nonzero(sample_idxs, as_tuple=True)
-            if(len(rows_idxs) == 0):
+
+            rows_able_to_fill = idxs_to_fill != sampling_budget
+            applicable_rows = torch.logical_and(rows_able_to_fill, sample_idxs)
+            nonzeros = torch.nonzero(applicable_rows, as_tuple=False)
+
+            non_finished = torch.nonzero(rows_able_to_fill)[:, 0]
+            full_history[non_finished, i] = next_states.squeeze()[non_finished]
+
+            if len(nonzeros) == 0:
                 continue
-            final_samples[rows_idxs[0], idxs_to_fill[rows_idxs]] = next_states
-            idxs_to_fill += sample_idxs
+            rows_turn = nonzeros[:, 0].view(-1)
+            final_samples[rows_turn, idxs_to_fill[rows_turn]] = next_states[rows_turn]
+            idxs_to_fill += applicable_rows
             tape_head = next_states
 
-        return final_samples
+        return final_samples, full_history
 
 
 class EmbeddedMarkC_BD(SPManager):
