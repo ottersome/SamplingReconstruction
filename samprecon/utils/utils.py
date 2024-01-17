@@ -50,9 +50,9 @@ def dec_rep_to_batched_rep(
         masks[i, :length] = 1
     # Create One Hot representations
     # All zeros means unknown. (Though I'm not sure this is the best way to specify it)
-    one_hot = F.one_hot(dec_tape, num_classes=num_classes + 1).float()  # +1 for padding
+    one_hot = F.one_hot(dec_tape, num_classes=num_classes).float()  # +1 for padding
 
-    full_resolution = torch.zeros(batch_size, max_len.item(), num_classes + 1).to(
+    full_resolution = torch.zeros(batch_size, max_len.item(), num_classes).to(
         device
     )  # type:ignore
     # Place the onehot decimated samples into full)resolutio

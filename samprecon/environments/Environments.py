@@ -349,27 +349,24 @@ class MarkovianUniformCumulativeEnvironment:
         """
         # New State
         next_init_states = cur_state[:, -1]
-        cur_decimation_period = cur_state[:, 0].view(-1,1)
+        cur_decimation_period = cur_state[:, 0].view(-1, 1)
         new_dec_factor = torch.clamp(
             cur_decimation_period + actions, 1, int(self.max_decimation)
         )
 
-        # Perform actions 
+        # Perform actions
         sampled_chain, fullres_chain = self.state_generator.sample(
             new_dec_factor, self.sampling_budget, next_init_states
         )
         sampled_chain = sampled_chain.to(self.device).to(torch.long)
 
-        # dec_state = differentiable_uniform_sampler(new_state_oh, new_dec_rates) # TOREM:
-
-        oh_fullres_sig = dec_rep_to_batched_rep(
+        regret = self.feedback(
             sampled_chain,
-            new_dec_factor,  # CHECK: If first column contains periods
-            self.sampling_budget,
-            self.num_states + 1,  # For Padding
-            add_position=False,  # TODO: See 'true' helps
+            actions,
+            fullres_chain,
+            cur_decimation_period=new_dec_factor,
+            sampling_budget=self.sampling_budget,
         )
-        regret = self.feedback(oh_fullres_sig, actions, fullres_chain)
 
         # actual_categories = torch.argmax(F.softmax(reconstruction, dim=-1), dim=-1)
         # self.logger.debug(f"Reconstruction sum {actual_categories}")

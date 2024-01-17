@@ -5,16 +5,17 @@ import torch.nn.functional as F
 from torch import nn
 
 from samprecon.samplers.spatial_transformers import differentiable_uniform_sampler
+from samprecon.utils.utils import dec_rep_to_batched_rep
 from sp_sims.estimators.algos import frequency_matrix, power_series_log
 
 
 class Feedbacks(ABC):
     @abstractmethod
-    def get_feedback(self, state, action, truth):
+    def get_feedback(self, state, action, truth, **kwargs) -> torch.Tensor:
         pass
 
-    def __call__(self, state, action, truth) -> torch.Tensor:
-        return self.get_feedback(state, action, truth)
+    def __call__(self, state, action, truth, **kwargs) -> torch.Tensor:
+        return self.get_feedback(state, action, truth, **kwargs)
 
 
 class Reconstructor(Feedbacks):
@@ -24,11 +25,11 @@ class Reconstructor(Feedbacks):
         self.num_states = num_states
         self.reconstructor = reconstructor
 
-    def get_feedback(self, state, action, truth):
+    def get_feedback(self, sampled_chain, action, truth, **kwargs):
         """
         Parameters:
         ~~~~~~~~~~~
-            state: oh-encoded chain of full res chains
+            sampled: non-OH sampled chain
         """
 
         # new_oh = F.one_hot(
@@ -36,9 +37,17 @@ class Reconstructor(Feedbacks):
         #     num_classes=self.num_states,
         # ).float()
         # dec_state = differentiable_uniform_sampler(new_oh, action)
+        oh_fullres_sig = dec_rep_to_batched_rep(
+            sampled_chain,
+            kwargs["cur_decimation_period"],  # CHECK: If first column contains periods
+            kwargs["sampling_budget"],
+            self.num_states + 1,  # For Padding
+            add_position=False,  # TODO: See 'true' helps
+        )
 
         reconstruction = self.reconstructor(
-            state,
+            oh_fullres_sig,
+            sampled_chain,
             # action,
             # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
         ).squeeze(0)

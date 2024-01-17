@@ -7,11 +7,7 @@ from .reconstruct_intf import Reconstructor
 
 
 class RNNReconstructor(nn.Module):
-    def __init__(
-        self,
-        amnt_states: int,
-        max_decimation_rate: int,
-    ):
+    def __init__(self, amnt_states: int, sampling_budget, bidirectional=True):
         """
         Args:
             others: same as interface
@@ -21,45 +17,44 @@ class RNNReconstructor(nn.Module):
         """
         super().__init__()
         # Take a variable length scalar input signals
-        self.max_decimation_rate = max_decimation_rate
-        self.hidden_size = amnt_states + 1 #+ 1  # One for rate and one for count
+        self.sampling_budget = sampling_budget
         self.amnt_states = amnt_states
-        self.rnn = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
-        self.classifier = nn.Linear(self.hidden_size, amnt_states + 1)  # For padding
+
+        self.input_size = amnt_states + 1  # + 1  # One for rate and one for count
+        self.hidden_size = self.sampling_budget
+        self.rnn = nn.LSTM(
+            self.input_size,
+            self.hidden_size,
+            batch_first=True,
+            bidirectional=bidirectional,
+        )
+        classifier_input = (
+            self.hidden_size * 2 if bidirectional == True else self.hidden_size
+        )
+        self.classifier = nn.Linear(classifier_input, amnt_states + 1)  # For padding
         self.sm = nn.LogSoftmax(dim=-1)
 
     def forward(
         self,
         subsampled_signal_oh: torch.Tensor,
+        cell_state: torch.Tensor,
     ):
         """
         Parameters
         ~~~~~~~~~~
             subsampled_signal_oh: (batch_size) x (longest_seq_len) (Padded ofc)
         """
-        # Append subsampled_signal, rate, reconstruct_length
-        # rate_cloned = rate.repeat_interleave(reconstruct_length, dim=1).unsqueeze(
-        # -1
-        # )
-        # mask = (
-        #     torch.ones((1, subsampled_signal.shape[1]), dtype=torch.float32)
-        #     .unsqueeze(-1)
-        #     .to(subsampled_signal.device)
-        # )
-        # rate_cloned = (mask * rate) / self.max_decimation_rate
-        #
-        # x = torch.cat((subsampled_signal, rate_cloned), dim=-1)
-        # x_count = (
-        #     torch.flip(torch.arange(subsampled_signal.shape[1]), [0]).view(
-        #         x.shape[0], -1, 1
-        #     )
-        #     / subsampled_signal.shape[1]
-        # ).to(subsampled_signal.device)
-        # x = torch.cat((x, x_count), dim=-1)
-        # Normalize on second dimension
+
+        # Zero initalization
+        batch_size = subsampled_signal_oh.shape[0]
+        hidden_state = torch.zeros((2, batch_size, self.hidden_size)).to(
+            subsampled_signal_oh.device
+        )
+
+        twice_cell = torch.stack((cell_state, cell_state))
 
         out, hiddn = self.rnn(
-            subsampled_signal_oh
+            subsampled_signal_oh, (hidden_state, twice_cell)
         )  # Check what is the difference between, out and hiddn
         y = self.classifier(out)
         # y = self.sm(y)
