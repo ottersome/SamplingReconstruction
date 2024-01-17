@@ -159,22 +159,25 @@ class BDStates:
 
         # (New) Tensored Approach
         # CHECK: validity in debugger
+        device = decimation_rates.device
         batch_size = decimation_rates.shape[0]
         num_states = self.P.shape[0]
         widest_period = torch.max(decimation_rates)
         length = 1 + widest_period * (sampling_budget - 1)
-        probs_tensor = torch.Tensor(self.P).to(decimation_rates.device)
+        probs_tensor = torch.Tensor(self.P).to(device)
 
-        final_samples = torch.full((batch_size, sampling_budget), -1)  # -1 for debug
-        idxs_to_fill = torch.full((batch_size, 1), 1).to(torch.long)
+        final_samples = torch.full((batch_size, sampling_budget), -1).to(
+            device
+        )  # -1 for debug
+        idxs_to_fill = torch.full((batch_size, 1), 1).to(torch.long).to(device)
 
         full_history = torch.full(
             (batch_size, length), num_states  # num_states is value for padding
-        )
+        ).to(device)
         full_history[:, 0] = init_states.view(-1)
 
         final_samples[:, 0] = init_states.view(-1)
-        tape_head = init_states.clone()
+        tape_head = init_states.clone().to(init_states.device)
 
         for i in range(1, length):
             selection_probabilities = probs_tensor[tape_head.squeeze(), :]

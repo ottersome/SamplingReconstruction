@@ -38,6 +38,7 @@ def dec_rep_to_batched_rep(
     Takes a representation of B samples all under the same sampling budget.
     Then expands into a one hot encoded representation that can be fed as a batch to the algorithm
     """
+    device = dec_tape.device
 
     batch_size = dec_tape.shape[0]
     # Create Lengths
@@ -51,8 +52,8 @@ def dec_rep_to_batched_rep(
     # All zeros means unknown. (Though I'm not sure this is the best way to specify it)
     one_hot = F.one_hot(dec_tape, num_classes=num_classes + 1).float()  # +1 for padding
 
-    full_resolution = torch.zeros(
-        batch_size, max_len.item(), num_classes + 1
+    full_resolution = torch.zeros(batch_size, max_len.item(), num_classes + 1).to(
+        device
     )  # type:ignore
     # Place the onehot decimated samples into full)resolutio
     for b in range(batch_size):  # CHECK: Proper behavior (should be fine)
