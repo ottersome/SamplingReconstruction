@@ -192,7 +192,7 @@ class BDStates:
             nonzeros = torch.nonzero(applicable_rows, as_tuple=False)
 
             non_finished = torch.nonzero(rows_able_to_fill)[:, 0]
-            full_history[non_finished, i] = next_states.squeeze()[non_finished]
+            full_history[non_finished, i] = next_states.view(-1)[non_finished]
 
             if len(nonzeros) == 0:
                 continue

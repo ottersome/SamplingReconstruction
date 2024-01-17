@@ -11,6 +11,7 @@ def calculate_returns(rewards, gamma):
     returns = torch.zeros_like(rewards)
 
     for i in range(returns.shape[1]-1,-1,-1):
-        returns[:,i] = rewards[:,i] + gamma * R
+        R = rewards[:,i] + gamma * R
+        returns[:,i] = R
 
     return returns
