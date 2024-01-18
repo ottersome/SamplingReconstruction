@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
+from logging import DEBUG
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from samprecon.samplers.spatial_transformers import differentiable_uniform_sampler
-from samprecon.utils.utils import dec_rep_to_batched_rep
+from samprecon.utils.utils import dec_rep_to_batched_rep, setup_logger
 from sp_sims.estimators.algos import frequency_matrix, power_series_log
 
 
@@ -24,6 +25,7 @@ class Reconstructor(Feedbacks):
         self.criterion = criterion
         self.num_states = num_states
         self.reconstructor = reconstructor
+        self.logger = setup_logger("Reconstructor")
 
     def get_feedback(self, sampled_chain, action, truth, **kwargs):
         """
@@ -54,6 +56,9 @@ class Reconstructor(Feedbacks):
 
         logsoft_recon = F.log_softmax(reconstruction, dim=-1).view(
             -1, reconstruction.shape[-1]
+        )
+        self.logger.debug(
+            f"Reconstruction looks like : {F.softmax(reconstruction, dim=-1)}"
         )
 
         regret = (
