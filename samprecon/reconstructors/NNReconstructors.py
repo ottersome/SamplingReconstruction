@@ -1,9 +1,22 @@
+from abc import ABC, abstractmethod
 from typing import List
 
 import torch
+import torch.nn
 import torch.nn as nn
+from scipy.linalg import expm
 
-from .reconstruct_intf import Reconstructor
+from samprecon.utils.utils import dec_rep_to_batched_rep, setup_logger
+from sp_sims.estimators.algos import sampling_viterbi
+
+
+class Reconstructor(ABC):
+    def __call__(self, subsampled_signal, new_dec_period, **kwargs):
+        return self.reconstruct(subsampled_signal, new_dec_period, **kwargs)
+
+    @abstractmethod
+    def reconstruct(self, subsampled_signal, new_dec_period, **kwargs):
+        pass
 
 
 class RNNReconstructor(nn.Module):
@@ -36,14 +49,22 @@ class RNNReconstructor(nn.Module):
 
     def forward(
         self,
-        subsampled_signal_oh: torch.Tensor,
-        cell_state: torch.Tensor,
+        subsampled_signal: torch.Tensor,
+        new_dec_period: torch.Tensor,
     ):
         """
         Parameters
         ~~~~~~~~~~
             subsampled_signal_oh: (batch_size) x (longest_seq_len) (Padded ofc)
         """
+        subsampled_signal_oh = dec_rep_to_batched_rep(
+            subsampled_signal,
+            new_dec_period,  # CHECK: If first column contains periods
+            self.sampling_budget,
+            self.amnt_states + 1,  # For Padding
+            add_position=False,  # TODO: See 'true' helps
+        )
+        cell_state = subsampled_signal  # Yup, straight up
 
         # Zero initalization
         batch_size = subsampled_signal_oh.shape[0]
@@ -62,10 +83,76 @@ class RNNReconstructor(nn.Module):
         # TODO: return the feedback
         return y
 
+    def reconstruct(
+        self, subsampled_signal: torch.Tensor, new_dec_period: torch.Tensor, **kwargs
+    ):
+        return self.forward(subsampled_signal, new_dec_period)
+
     def initialize_grad_hooks(self):
         for layer in self.modules():
             if isinstance(layer, torch.nn.Linear):
                 layer.register_backward_hook(print_grad_hook)
+
+
+class MLEReconstructor(Reconstructor):
+    def __init__(
+        self,
+        queue_matrix: torch.Tensor,
+        padding_value: int,
+        sampling_budget,
+        highres_delta: float,
+    ):
+        self.Q = queue_matrix
+        self.logger = setup_logger(__class__.__name__)
+        self.highres_delta = highres_delta
+        self.padding_value = padding_value
+        self.samp_budget = sampling_budget
+
+    def reconstruct(
+        self,
+        sampled_tape: torch.Tensor,
+        dec_prop: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Arguments
+        ~~~~~~~~~
+        dec_prop: How many states per sample we must recover
+        """
+        assert self.samp_budget == sampled_tape.shape[1]
+        batch_size = sampled_tape.shape[0]
+
+        max_length = int(torch.max((self.samp_budget - 1) * dec_prop + 1).item())
+
+        reconstruction = torch.full((batch_size, max_length), self.padding_value)
+
+        losses = torch.zeros((sampled_tape.shape[0], 1), dtype=torch.float32)
+
+        # OPTIM: Lots to optimizing to do here
+
+        for b in range(batch_size):  # Batch
+            cur_dec = dec_prop[b, 0].item()
+            P = torch.from_numpy(expm(cur_dec * self.highres_delta * self.Q))
+
+            if cur_dec == 1:
+                reconstruction[b, :self.samp_budget] = sampled_tape[b, :]
+                continue
+            
+            for s in range(self.samp_budget - 1):
+                viterbi_recon = torch.Tensor(
+                    sampling_viterbi(  # TODO: deal with cur_dec = 1
+                        cur_dec - 1,
+                        sampled_tape[b, s].item(),
+                        sampled_tape[b, s + 1].item(),
+                        P,
+                    )
+                )
+                if s != self.samp_budget - 2:
+                    reconstruction[b, s * cur_dec : (s + 1) * cur_dec ] = viterbi_recon[:-1]
+                else:
+                    reconstruction[b, s * cur_dec : (s+1)* cur_dec + 1] = viterbi_recon
+
+
+        return reconstruction
 
 
 def print_grad_hook(module, grad_input, grad_output):

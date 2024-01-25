@@ -1,3 +1,5 @@
+from typing import List
+
 import numpy as np
 import sympy as ym
 import sympy.printing as printing
@@ -88,6 +90,75 @@ def frequency_matrix(tape, num_states):
 # final_mat += cur_mat
 
 # return final_mat
+
+
+def sampling_viterbi(
+    num_hf_points, initial_state, last_state, trans_matrix
+) -> List[int]:
+    """
+    Assumes initial state is given and thus w.p. 1
+    Only works for single tape. TODO: tensorize it.
+
+    Arguments
+    ~~~~~~~~~
+        num_hf_samples: Number of high frequency points between two samples.
+        initial_state: State at t=0
+        last_state: State at t=\Delta_s
+        trans_matrix: Matrix defining system dynamics at the high resolution period
+    Returns
+    ~~~~~~~
+        mle_tape: List of hidden states. Including the inital state and the final state
+    """
+    # Two Hidden States
+    tape_length = num_hf_points + 1
+
+    # Emission Probs must be KXN where K is num of hidden states and N is num of emitted states
+    num_states = trans_matrix.shape[0]
+
+    max_trans_probs = torch.zeros((num_states, tape_length+1), dtype=torch.float32)
+    max_trans_paths = torch.zeros((num_states, tape_length+1), dtype=torch.long)
+
+    # Fill them
+    for i in range(num_states):
+        max_trans_probs[i, 0] = 1 if i == initial_state else 0
+        max_trans_paths[i, 0] = -1  # Unused
+
+    # Now onto the sequence
+    for j in range(1, tape_length + 1):
+        if j != tape_length:
+            repeated_mtp = (
+                max_trans_probs[:, j - 1].view(-1, 1).repeat_interleave(num_states, 1)
+            )
+            evals = torch.mul(repeated_mtp, trans_matrix)
+            vals, idxs = torch.max(evals,dim=0)
+            max_trans_probs[:, j] = vals
+            max_trans_paths[:, j] = idxs
+
+            # for i in range(num_states):
+            #     max_trans_probs[i, j] = max(
+            #         max_trans_probs[:, j - 1] * trans_matrix[:, i]
+            #     )
+            #     max_trans_paths[i, j] = np.argmax(
+            #         max_trans_probs[:, j - 1] * trans_matrix[:, i]
+            #     )
+            # pass
+        else:  # Final State
+            vals, idxs = torch.max(
+                max_trans_probs[:, j - 1] * trans_matrix[:, last_state], dim=0
+            )
+            max_trans_probs[last_state, j] = vals
+            max_trans_paths[last_state, j] = idxs
+        
+    mle_tape = [last_state]
+
+    for t in range(tape_length, 0, -1):  # CHECK: it to reach 0
+        best_last_hs = max_trans_paths[mle_tape[0], t].item()
+        mle_tape.insert(0, best_last_hs)
+        if t == 1:
+            pass
+    # Check the initiail state is being sent through
+
+    return mle_tape
 
 
 def viterbi(obs_tape, inital_hs_probs, trans_probs, emission_probs):

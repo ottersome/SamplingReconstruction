@@ -11,7 +11,6 @@ import torch.optim as optim
 from scipy.linalg import expm
 
 from samprecon.feedbacksigs.feedbacks import Feedbacks, LogEstimator, Reconstructor
-from samprecon.reconstructors.reconstruct_intf import Reconstructor
 from samprecon.samplers.spatial_transformers import (
     LocalizationNework,
     differentiable_uniform_sampler,
@@ -379,7 +378,7 @@ class MarkovianUniformCumulativeEnvironment:
             new_state,
             regret,
             self.done,
-            feedback
+            feedback,
         )
 
     def _single_state_step(

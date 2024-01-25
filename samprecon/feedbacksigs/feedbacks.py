@@ -1,23 +1,22 @@
 import time
 from abc import ABC, abstractmethod
 from logging import DEBUG
-from typing import Dict, Any
+from typing import Any, Dict
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from samprecon.samplers.spatial_transformers import differentiable_uniform_sampler
 from samprecon.utils.utils import dec_rep_to_batched_rep, setup_logger
 from sp_sims.estimators.algos import frequency_matrix, power_series_log
 
 
 class Feedbacks(ABC):
     @abstractmethod
-    def get_feedback(self, state, action, truth, **kwargs) -> Dict[str,Any]:
+    def get_feedback(self, state, action, truth, **kwargs) -> Dict[str, Any]:
         pass
 
-    def __call__(self, state, action, truth, **kwargs) -> Dict[str,Any]:
+    def __call__(self, state, action, truth, **kwargs) -> Dict[str, Any]:
         return self.get_feedback(state, action, truth, **kwargs)
 
 
@@ -29,46 +28,42 @@ class Reconstructor(Feedbacks):
         self.reconstructor = reconstructor
         self.logger = setup_logger("Reconstructor")
 
-    def get_feedback(self, sampled_chain, action, truth, **kwargs):
+    def get_feedback(self, sampled_chain, action, truth, **kwargs) -> Dict[str, Any]:
         """
         Parameters:
         ~~~~~~~~~~~
             sampled: non-OH sampled chain
         """
 
+        new_dec_period = kwargs["new_decimation_period"]
+        sampling_budget = kwargs["sampling_budget"]
         # new_oh = F.one_hot(
         #     state.view(1, -1).to(torch.long),
         #     num_classes=self.num_states,
         # ).float()
         # dec_state = differentiable_uniform_sampler(new_oh, action)
-        oh_fullres_sig = dec_rep_to_batched_rep(
-            sampled_chain,
-            kwargs["new_decimation_period"],  # CHECK: If first column contains periods
-            kwargs["sampling_budget"],
-            self.num_states + 1,  # For Padding
-            add_position=False,  # TODO: See 'true' helps
-        )
 
         reconstruction = self.reconstructor(
-            oh_fullres_sig,
             sampled_chain,
-            # action,
-            # 1 + torch.ceil(action.squeeze() * (self.sampling_budget - 1)),
+            new_dec_period,
         ).squeeze(0)
 
-        logsoft_recon = F.log_softmax(reconstruction, dim=-1).view(
-            -1, reconstruction.shape[-1]
-        )
-        self.logger.debug(
-            f"Reconstruction looks like : {F.softmax(reconstruction, dim=-1)}"
-        )
+        #logsoft_recon = F.log_softmax(reconstruction, dim=-1).view(
+        #    -1, reconstruction.shape[-1]
+        #)
+        #self.logger.debug(
+        #    f"Reconstruction looks like : {F.softmax(reconstruction, dim=-1)}"
+        #)
 
+        pass
         regret = (
-            self.criterion(logsoft_recon, truth.to(torch.long).view(-1))
+            #self.criterion(logsoft_recon, truth.to(torch.long).view(-1))
+            self.criterion(reconstruction.to(torch.float32), truth.to(torch.float32))
             .view(reconstruction.shape[0], -1)
             .mean(dim=-1)
         )
-        return regret
+
+        return {"batch_loss": regret}
 
 
 class LogEstimator(Feedbacks):
@@ -80,7 +75,7 @@ class LogEstimator(Feedbacks):
 
     def get_feedback(
         self, new_state, action, truth, **kwargs
-    ) -> Dict[str,Any]:  # TODO: implement action and truth
+    ) -> Dict[str, Any]:  # TODO: implement action and truth
         # Will estimate Q via P
         new_dec_periods = kwargs["new_decimation_period"]
         p_est = frequency_matrix(new_state, self.num_states)
@@ -88,15 +83,14 @@ class LogEstimator(Feedbacks):
         q_est = logp / new_dec_periods.unsqueeze(-1)
         repeated_q = self.Q.unsqueeze(0).repeat(q_est.shape[0], 1, 1)
         # TODO we could regularize here to make sure that Q_est is a valid generator matrix
-        #regularize_loss = 
+        # regularize_loss =
         loss = self.criterion(q_est, self.Q)
         batch_loss = loss.mean(dim=(-2, -1))
         # loss_tensor = torch.tensor(loss)
 
         return_dict = {
-            "batch_loss" : batch_loss,
-            "avg_estimated_Q" : q_est.mean(dim=0),  
-
+            "batch_loss": batch_loss,
+            "avg_estimated_Q": q_est.mean(dim=0),
         }
         return return_dict
 

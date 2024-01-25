@@ -6,7 +6,10 @@ import torch.nn.functional as F
 
 
 def setup_logger(name: str, level=logging.INFO):
-    os.makedirs("./logs", exist_ok=True)
+    cwd = os.getcwd()
+    full_path = os.path.join(cwd, "./logs")
+    os.makedirs(full_path, exist_ok=True)
+
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
 
@@ -15,7 +18,7 @@ def setup_logger(name: str, level=logging.INFO):
     )
 
     sh = logging.StreamHandler()
-    fh = logging.FileHandler("./logs/" + name + ".log", mode="w")
+    fh = logging.FileHandler(os.path.join(full_path, name + ".log"), mode="w")
     sh.setLevel(level)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)

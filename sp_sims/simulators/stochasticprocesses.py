@@ -139,6 +139,7 @@ class BDStates:
         self.P = expm(self.Q * self.DT)
         self.init_state = 0
         self.max_state = self.P.shape[0] - 1
+        self.padding_value = self.max_state + 1
 
         # self.curr_history = [self.init_state]  # TODO: make this into a limited FIFO ?
 
@@ -172,7 +173,7 @@ class BDStates:
         idxs_to_fill = torch.full((batch_size, 1), 1).to(torch.long).to(device)
 
         full_history = torch.full(
-            (batch_size, length), num_states  # num_states is value for padding
+            (batch_size, length), self.padding_value  # num_states is value for padding
         ).to(device)
         full_history[:, 0] = init_states.view(-1)
 
