@@ -350,34 +350,36 @@ class MarkovianUniformCumulativeEnvironment:
         # New State
         next_init_states = cur_state[:, -1]
         cur_decimation_period = cur_state[:, 0].view(-1, 1)
-        new_dec_factor = torch.clamp(
+        new_dec_period = torch.clamp(
             cur_decimation_period + actions, 1, int(self.max_decimation)
         )
 
         # Perform actions
         sampled_chain, fullres_chain = self.state_generator.sample(
-            new_dec_factor, self.sampling_budget, next_init_states
+            new_dec_period, self.sampling_budget, next_init_states
         )
         sampled_chain = sampled_chain.to(self.device).to(torch.long)
 
-        regret = self.feedback(
+        feedback = self.feedback(
             sampled_chain,
             actions,
             fullres_chain,
-            cur_decimation_period=new_dec_factor,
+            new_decimation_period=new_dec_period,
             sampling_budget=self.sampling_budget,
         )
 
         # actual_categories = torch.argmax(F.softmax(reconstruction, dim=-1), dim=-1)
         # self.logger.debug(f"Reconstruction sum {actual_categories}")
         # self.prev_state = new_state.to(torch.float)
-        new_state = torch.cat((new_dec_factor, sampled_chain), dim=-1)
+        new_state = torch.cat((new_dec_period, sampled_chain), dim=-1)
 
+        regret = feedback["batch_loss"]
         return (  # CHECK: This probably unnecessary ::actions decimation
             # sampled_chain[:: int(actions)][: self.sampling_budget].view(1, -1),
             new_state,
             regret,
             self.done,
+            feedback
         )
 
     def _single_state_step(

@@ -41,24 +41,39 @@ def power_series_exp(Q, power=512):
     return final_mat
 
 
-def power_series_log(mat, power):
-    assert mat.shape[0] == mat.shape[1]
+def power_series_log(pMat, power):
+    """
+    Returns log(P). Not Q. For Q you need to divde by period
+    """
+    assert pMat.shape[1] == pMat.shape[2]
 
     # Test for convergence
     # print("||B-I||=", np.linalg.norm(mat - torch.eye(mat.shape[0]), ord="fro"))
-    final_mat = torch.zeros_like(mat)
-    for k in range(1, power):
-        cur_mat = (-1) ** (k + 1) * (1 / k) * (mat - torch.eye(mat.shape[0]))
-        final_mat += cur_mat
-    return final_mat
+    final_mats = torch.zeros_like(pMat).to(pMat.device)
+    eye = torch.eye(pMat.shape[1]).to(pMat.device)
+    for b in range(pMat.shape[0]):
+        for k in range(1, power):
+            # cur_mat = (-1) ** (k + 1) * (1 / k) * (pMat[b] - eye)
+            cur_mat = (
+                (-1) ** (k + 1)
+                * (1 / k)
+                * torch.linalg.matrix_power((pMat[b] - eye), k)
+            )
+            final_mats[b, :, :] += cur_mat
+    return final_mats
 
 
 def frequency_matrix(tape, num_states):
-    arr = torch.zeros((num_states, num_states))
+    arr = torch.zeros((tape.shape[0], num_states, num_states)).to(tape.device)
     for i in range(len(tape) - 1):
-        arr[tape[i], tape[i + 1]] += 1
-    tots_trans = torch.sum(arr)
-    arr /= tots_trans
+        for j in range(tape.shape[0]):
+            arr[j, tape[j, i], tape[j, i + 1]] += 1
+
+    arr_sum = torch.sum(arr, dim=-1, keepdim=True)
+    arr[arr != 0] = (
+        arr[arr != 0] / arr_sum.repeat_interleave(num_states, dim=-1)[arr != 0]
+    )
+
     return arr
 
 

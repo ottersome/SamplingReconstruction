@@ -51,7 +51,7 @@ class RNNReconstructor(nn.Module):
             subsampled_signal_oh.device
         )
 
-        twice_cell = torch.stack((cell_state, cell_state))
+        twice_cell = torch.stack((cell_state, cell_state)).to(torch.float)
 
         out, hiddn = self.rnn(
             subsampled_signal_oh, (hidden_state, twice_cell)
