@@ -10,11 +10,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 from scipy.linalg import expm
 
-from samprecon.feedbacksigs.feedbacks import Feedbacks, LogEstimator, Reconstructor
+from samprecon.feedbacksigs.feedbacks import (Feedbacks, LogEstimator,
+                                              Reconstructor)
 from samprecon.samplers.spatial_transformers import (
-    LocalizationNework,
-    differentiable_uniform_sampler,
-)
+    LocalizationNework, differentiable_uniform_sampler)
 from samprecon.utils.utils import dec_rep_to_batched_rep, setup_logger
 from sp_sims.detectors.pearsonneyman import take_guesses
 from sp_sims.simulators.stochasticprocesses import BDStates
@@ -314,7 +313,7 @@ class MarkovianUniformCumulativeEnvironment:
 
         self.logger = setup_logger("MarkovianUniformEnvironment", INFO)
         self.done = False
-        self.criterion = nn.NLLLoss()
+        #self.criterion = nn.NLLLoss() # Look slike it is not being used
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def reset(self, dec_rates, init_states):

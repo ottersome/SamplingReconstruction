@@ -54,13 +54,27 @@ class Reconstructor(Feedbacks):
         #self.logger.debug(
         #    f"Reconstruction looks like : {F.softmax(reconstruction, dim=-1)}"
         #)
+        # Check if criteroin is MSE or NLL
+        if self.criterion.__class__.__name__ == "MSELoss":
+            regret = (
+                self.criterion(reconstruction.to(torch.float32), truth.to(torch.float32))
+                .view(truth.shape[0], -1)
+                .mean(dim=-1)
+            )
+        else: # Accuracy Criterion 
+            regret = (
+                self.criterion(reconstruction, truth.to(torch.long))
+                .view(truth.shape[0], -1)
+                .sum(dim=-1)
+            )
 
-        regret = (
-            #self.criterion(logsoft_recon, truth.to(torch.long).view(-1))
-            self.criterion(reconstruction.to(torch.float32), truth.to(torch.float32))
-            .view(reconstruction.shape[0], -1)
-            .mean(dim=-1)
-        )
+
+        #regret = (
+        #    #self.criterion(logsoft_recon, truth.to(torch.long).view(-1))
+        #    self.criterion(reconstruction.to(torch.float32), truth.to(torch.float32))
+        #    .view(reconstruction.shape[0], -1)
+        #    .mean(dim=-1)
+        #)
 
         return {"batch_loss": regret}
 
