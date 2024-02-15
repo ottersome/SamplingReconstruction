@@ -296,14 +296,12 @@ class MarkovianUniformCumulativeEnvironment:
         # reconstructor: nn.Module,
         feedback: Feedbacks,
         # Some othe random varsj
-        starting_decrate: int,
         max_decimation: int,
         sampling_budget: int,
     ):
         # self.device = torch.device("cuda")
         self.state_generator = state_generator
         self.num_states = state_generator.max_state
-        self.cur_decimation_rate = starting_decrate
         self.sampling_budget = sampling_budget
         self.max_decimation = max_decimation
         # Modules

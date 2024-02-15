@@ -46,7 +46,7 @@ class Reconstructor(Feedbacks):
         reconstruction = self.reconstructor(
             sampled_chain,
             new_dec_period,
-        ).squeeze(0)
+        ).squeeze(0).to(truth.device)
 
         #logsoft_recon = F.log_softmax(reconstruction, dim=-1).view(
         #    -1, reconstruction.shape[-1]
@@ -55,7 +55,6 @@ class Reconstructor(Feedbacks):
         #    f"Reconstruction looks like : {F.softmax(reconstruction, dim=-1)}"
         #)
 
-        pass
         regret = (
             #self.criterion(logsoft_recon, truth.to(torch.long).view(-1))
             self.criterion(reconstruction.to(torch.float32), truth.to(torch.float32))

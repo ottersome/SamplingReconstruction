@@ -125,13 +125,12 @@ class MLEReconstructor(Reconstructor):
 
         reconstruction = torch.full((batch_size, max_length), self.padding_value)
 
-        losses = torch.zeros((sampled_tape.shape[0], 1), dtype=torch.float32)
 
         # OPTIM: Lots to optimizing to do here
 
         for b in range(batch_size):  # Batch
             cur_dec = dec_prop[b, 0].item()
-            P = torch.from_numpy(expm(cur_dec * self.highres_delta * self.Q))
+            P = torch.from_numpy(expm(cur_dec * self.highres_delta * self.Q.cpu()))
 
             if cur_dec == 1:
                 reconstruction[b, :self.samp_budget] = sampled_tape[b, :]
