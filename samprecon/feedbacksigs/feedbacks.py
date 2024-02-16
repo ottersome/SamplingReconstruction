@@ -58,15 +58,12 @@ class Reconstructor(Feedbacks):
         if self.criterion.__class__.__name__ == "MSELoss":
             regret = (
                 self.criterion(reconstruction.to(torch.float32), truth.to(torch.float32))
-                .view(truth.shape[0], -1)
-                .mean(dim=-1)
+                .view(truth.shape[0], -1) # This should not be necessary
+                .mean()
+                #.mean(dim=-1)
             )
         else: # Accuracy Criterion 
-            regret = (
-                self.criterion(reconstruction, truth.to(torch.long))
-                .view(truth.shape[0], -1)
-                .sum(dim=-1)
-            ) / truth.shape[1]
+            regret =  self.criterion(reconstruction, truth).to(torch.float32).mean()
 
 
         #regret = (
