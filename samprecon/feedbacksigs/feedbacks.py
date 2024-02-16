@@ -66,7 +66,7 @@ class Reconstructor(Feedbacks):
                 self.criterion(reconstruction, truth.to(torch.long))
                 .view(truth.shape[0], -1)
                 .sum(dim=-1)
-            )
+            ) / truth.shape[1]
 
 
         #regret = (
